@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Outcome } from "./types.js";
+import { readJsonOrThrow, writeJsonAtomic } from "./durable-json.js";
 
 export interface CheckpointData {
   timestamp: string;
@@ -10,6 +11,7 @@ export interface CheckpointData {
   nodeRetries: Record<string, number>;
   context: Record<string, unknown>;
   logs: string[];
+  waitingForQuestionId?: string;
 }
 
 export class Checkpoint {
@@ -20,6 +22,7 @@ export class Checkpoint {
   nodeRetries: Record<string, number>;
   contextValues: Record<string, unknown>;
   logs: string[];
+  waitingForQuestionId?: string;
 
   constructor(opts?: Partial<CheckpointData>) {
     this.timestamp = opts?.timestamp ?? new Date().toISOString();
@@ -29,6 +32,7 @@ export class Checkpoint {
     this.nodeRetries = opts?.nodeRetries ?? {};
     this.contextValues = opts?.context ?? {};
     this.logs = opts?.logs ?? [];
+    this.waitingForQuestionId = opts?.waitingForQuestionId;
   }
 
   save(logsRoot: string): void {
@@ -42,14 +46,19 @@ export class Checkpoint {
       nodeRetries: this.nodeRetries,
       context: this.contextValues,
       logs: this.logs,
+      ...(this.waitingForQuestionId
+        ? { waitingForQuestionId: this.waitingForQuestionId }
+        : {}),
     };
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    writeJsonAtomic(filePath, data);
   }
 
   static load(logsRoot: string): Checkpoint {
     const filePath = path.join(logsRoot, "checkpoint.json");
-    const raw = fs.readFileSync(filePath, "utf-8");
-    const data = JSON.parse(raw) as CheckpointData;
+    const data = readJsonOrThrow<CheckpointData>(
+      filePath,
+      "Failed to load checkpoint JSON",
+    );
     return new Checkpoint(data);
   }
 

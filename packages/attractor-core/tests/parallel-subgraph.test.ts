@@ -8,6 +8,8 @@ import { Context } from "../src/state/context.js";
 import { StageStatus } from "../src/state/types.js";
 import type { Outcome } from "../src/state/types.js";
 import type { PipelineEvent } from "../src/events/index.js";
+import { QueueInterviewer } from "../src/handlers/interviewers.js";
+import { AnswerValue } from "../src/handlers/types.js";
 
 let tmpDir: string;
 
@@ -218,6 +220,137 @@ describe("Parallel handler subgraph execution", () => {
     expect(failCount).toBe(1);
   });
 
+  it("parallel branch with human gate returns WAITING instead of success", async () => {
+    const { graph } = preparePipeline(`
+      digraph ParallelHumanWaiting {
+        graph [goal="Parallel waits on human gate"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        parallel_node [shape=component, label="Fan Out", join_policy="wait_all"]
+        branch_a [type="succeed", label="Branch A"]
+        review_gate [shape=hexagon, label="Review branch"]
+        fan_in [shape=tripleoctagon, label="Fan In"]
+        start -> parallel_node
+        parallel_node -> branch_a
+        parallel_node -> review_gate
+        branch_a -> fan_in
+        review_gate -> fan_in [label="[A] Approve"]
+        fan_in -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      interviewer: new QueueInterviewer([
+        { value: AnswerValue.WAITING, questionId: "q-wait" },
+      ]),
+    });
+    runner.registerHandler("succeed", {
+      async execute() {
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.WAITING);
+    expect(result.completedNodes).toContain("start");
+    expect(result.completedNodes).not.toContain("parallel_node");
+  });
+
+  it("resume does not rerun already-completed sibling branches after waiting", async () => {
+    const { graph } = preparePipeline(`
+      digraph ParallelResumeNoRerun {
+        graph [goal="Avoid rerunning completed sibling branches"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        parallel_node [shape=component, label="Fan Out", join_policy="wait_all"]
+        branch_a [type="side_effect", label="Branch A"]
+        review_gate [shape=hexagon, label="Review branch"]
+        fan_in [shape=tripleoctagon, label="Fan In"]
+        start -> parallel_node
+        parallel_node -> branch_a
+        parallel_node -> review_gate
+        branch_a -> fan_in
+        review_gate -> fan_in [label="[A] Approve"]
+        fan_in -> exit
+      }
+    `);
+
+    let sideEffectRuns = 0;
+
+    const firstRunner = new PipelineRunner({
+      logsRoot: tmpDir,
+      interviewer: new QueueInterviewer([
+        { value: AnswerValue.WAITING, questionId: "q-0001" },
+      ]),
+    });
+    firstRunner.registerHandler("side_effect", {
+      async execute(_node, ctx) {
+        if (ctx.getString("current_node") === "parallel_node") {
+          sideEffectRuns++;
+        }
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    const first = await firstRunner.run(graph);
+    expect(first.outcome.status).toBe(StageStatus.WAITING);
+    expect(sideEffectRuns).toBe(1);
+
+    const resumedRunner = new PipelineRunner({
+      logsRoot: tmpDir,
+      resumeFrom: tmpDir,
+      interviewer: new QueueInterviewer([{ value: "A", questionId: "q-0001" }]),
+    });
+    resumedRunner.registerHandler("side_effect", {
+      async execute(_node, ctx) {
+        if (ctx.getString("current_node") === "parallel_node") {
+          sideEffectRuns++;
+        }
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    const resumed = await resumedRunner.run(graph);
+    expect(resumed.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(sideEffectRuns).toBe(1);
+  });
+
+  it("wait_all blocks on waiting branch when no failures", async () => {
+    const { graph } = preparePipeline(`
+      digraph WaitAllWaiting {
+        graph [goal="wait_all waiting"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        parallel_node [shape=component, label="Fan Out", join_policy="wait_all"]
+        branch_a [type="succeed", label="Branch A"]
+        branch_b [type="wait_branch", label="Branch B"]
+        fan_in [shape=tripleoctagon, label="Fan In"]
+        start -> parallel_node
+        parallel_node -> branch_a
+        parallel_node -> branch_b
+        branch_a -> fan_in
+        branch_b -> fan_in
+        fan_in -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+    runner.registerHandler("succeed", {
+      async execute() {
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+    runner.registerHandler("wait_branch", {
+      async execute() {
+        return { status: StageStatus.WAITING, notes: "branch waiting" };
+      },
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.WAITING);
+  });
+
   it("join policy first_success succeeds when at least one branch succeeds", async () => {
     const { graph } = preparePipeline(`
       digraph FirstSuccess {
@@ -292,6 +425,41 @@ describe("Parallel handler subgraph execution", () => {
       result.context.getString("parallel.results"),
     ) as Outcome[];
     expect(parallelResults.every((r) => r.status === StageStatus.FAIL)).toBe(true);
+  });
+
+  it("first_success returns waiting when no success yet and one branch waits", async () => {
+    const { graph } = preparePipeline(`
+      digraph FirstSuccessWaiting {
+        graph [goal="first_success waits"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        parallel_node [shape=component, label="Fan Out", join_policy="first_success"]
+        branch_a [type="fail_branch", label="Branch A"]
+        branch_b [type="wait_branch", label="Branch B"]
+        fan_in [shape=tripleoctagon, label="Fan In"]
+        start -> parallel_node
+        parallel_node -> branch_a
+        parallel_node -> branch_b
+        branch_a -> fan_in
+        branch_b -> fan_in
+        fan_in -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+    runner.registerHandler("fail_branch", {
+      async execute() {
+        return { status: StageStatus.FAIL, failureReason: "failed" };
+      },
+    });
+    runner.registerHandler("wait_branch", {
+      async execute() {
+        return { status: StageStatus.WAITING, notes: "pending answer" };
+      },
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.WAITING);
   });
 
   it("subgraph executor walks multi-step branches", async () => {
@@ -620,6 +788,49 @@ describe("k_of_n join policy", () => {
     // With default k=1 and one branch succeeding, should be SUCCESS
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
   });
+
+  it("returns waiting when k_of_n threshold is still reachable via waiting branch", async () => {
+    const { graph } = preparePipeline(`
+      digraph KofN_Waiting {
+        graph [goal="k_of_n waits while threshold reachable"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        parallel_node [shape=component, label="Fan Out", join_policy="k_of_n", join_k="2"]
+        branch_a [type="succeed", label="Branch A"]
+        branch_b [type="wait_branch", label="Branch B"]
+        branch_c [type="fail_branch", label="Branch C"]
+        fan_in [shape=tripleoctagon, label="Fan In"]
+        start -> parallel_node
+        parallel_node -> branch_a
+        parallel_node -> branch_b
+        parallel_node -> branch_c
+        branch_a -> fan_in
+        branch_b -> fan_in
+        branch_c -> fan_in
+        fan_in -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+    runner.registerHandler("succeed", {
+      async execute() {
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+    runner.registerHandler("wait_branch", {
+      async execute() {
+        return { status: StageStatus.WAITING, notes: "pending human" };
+      },
+    });
+    runner.registerHandler("fail_branch", {
+      async execute() {
+        return { status: StageStatus.FAIL, failureReason: "failed" };
+      },
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.WAITING);
+  });
 });
 
 describe("quorum join policy", () => {
@@ -733,6 +944,52 @@ describe("quorum join policy", () => {
       (r) => r.status === StageStatus.FAIL,
     ).length;
     expect(failCount).toBe(3);
+  });
+
+  it("returns waiting when quorum is still reachable via waiting branch", async () => {
+    const { graph } = preparePipeline(`
+      digraph Quorum_Waiting {
+        graph [goal="quorum waits while threshold reachable"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        parallel_node [shape=component, label="Fan Out", join_policy="quorum", join_quorum="0.75"]
+        branch_a [type="succeed", label="Branch A"]
+        branch_b [type="succeed", label="Branch B"]
+        branch_c [type="wait_branch", label="Branch C"]
+        branch_d [type="fail_branch", label="Branch D"]
+        fan_in [shape=tripleoctagon, label="Fan In"]
+        start -> parallel_node
+        parallel_node -> branch_a
+        parallel_node -> branch_b
+        parallel_node -> branch_c
+        parallel_node -> branch_d
+        branch_a -> fan_in
+        branch_b -> fan_in
+        branch_c -> fan_in
+        branch_d -> fan_in
+        fan_in -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+    runner.registerHandler("succeed", {
+      async execute() {
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+    runner.registerHandler("wait_branch", {
+      async execute() {
+        return { status: StageStatus.WAITING, notes: "pending answer" };
+      },
+    });
+    runner.registerHandler("fail_branch", {
+      async execute() {
+        return { status: StageStatus.FAIL, failureReason: "failed" };
+      },
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.WAITING);
   });
 });
 

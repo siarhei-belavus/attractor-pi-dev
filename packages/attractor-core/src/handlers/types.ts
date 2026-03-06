@@ -45,12 +45,14 @@ export enum AnswerValue {
   NO = "no",
   SKIPPED = "skipped",
   TIMEOUT = "timeout",
+  WAITING = "waiting",
 }
 
 export interface Answer {
   value: string | AnswerValue;
   selectedOption?: QuestionOption;
   text?: string;
+  questionId?: string;
 }
 
 /** Interface for all human interaction */

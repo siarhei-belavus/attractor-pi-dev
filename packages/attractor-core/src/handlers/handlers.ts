@@ -150,7 +150,25 @@ export class WaitForHumanHandler implements Handler {
       type: QuestionType.MULTIPLE_CHOICE,
       options,
       stage: node.id,
+      metadata: {
+        resumeQuestionId: context.getString("internal.waiting_for_question_id"),
+      },
     });
+
+    if (answer.value === AnswerValue.WAITING) {
+      return {
+        status: StageStatus.WAITING,
+        notes: "waiting for human answer",
+        contextUpdates: {
+          ...(answer.questionId
+            ? {
+              "internal.waiting_for_question_id": answer.questionId,
+              "human.gate.question_id": answer.questionId,
+            }
+            : {}),
+        },
+      };
+    }
 
     // Handle timeout
     if (answer.value === AnswerValue.TIMEOUT) {
@@ -163,6 +181,7 @@ export class WaitForHumanHandler implements Handler {
             contextUpdates: {
               "human.gate.selected": found.key,
               "human.gate.label": found.label,
+              "internal.waiting_for_question_id": "",
             },
           });
         }
@@ -170,11 +189,18 @@ export class WaitForHumanHandler implements Handler {
       return {
         status: StageStatus.RETRY,
         failureReason: "human gate timeout, no default",
+        contextUpdates: {
+          "internal.waiting_for_question_id": "",
+        },
       };
     }
 
     if (answer.value === AnswerValue.SKIPPED) {
-      return failOutcome("human skipped interaction");
+      return failOutcome("human skipped interaction", {
+        contextUpdates: {
+          "internal.waiting_for_question_id": "",
+        },
+      });
     }
 
     // Find matching choice
@@ -190,6 +216,10 @@ export class WaitForHumanHandler implements Handler {
       contextUpdates: {
         "human.gate.selected": selected.key,
         "human.gate.label": selected.label,
+        "internal.waiting_for_question_id": "",
+        ...(answer.questionId
+          ? { "human.gate.question_id": answer.questionId }
+          : {}),
       },
     });
   }
@@ -231,15 +261,45 @@ export class ParallelHandler implements Handler {
       return successOutcome({ notes: "Parallel handler (no subgraph executor)" });
     }
 
-    // Execute branches with bounded parallelism and error policy
-    const results = await this.executeBranches(
-      branches,
-      context,
-      graph,
-      logsRoot,
-      maxParallel,
-      errorPolicy,
-    );
+    // Execute branches with bounded parallelism and error policy.
+    // On resume from WAITING, reuse prior non-waiting outcomes and rerun only
+    // branches that were waiting.
+    let results: Outcome[];
+    const resumeResults = this.readResumableResults(context, branches.length);
+    if (resumeResults) {
+      const waitingIndexes = resumeResults
+        .map((result, index) => ({ result, index }))
+        .filter((entry) => entry.result.status === StageStatus.WAITING)
+        .map((entry) => entry.index);
+
+      if (waitingIndexes.length > 0) {
+        const rerunMap = await this.executeBranchSubset(
+          waitingIndexes,
+          branches,
+          context,
+          graph,
+          logsRoot,
+          maxParallel,
+          errorPolicy,
+        );
+        results = [...resumeResults];
+        for (const waitingIndex of waitingIndexes) {
+          const rerun = rerunMap.get(waitingIndex);
+          results[waitingIndex] = rerun ?? failOutcome("Branch rerun did not produce an outcome");
+        }
+      } else {
+        results = resumeResults;
+      }
+    } else {
+      results = await this.executeBranches(
+        branches,
+        context,
+        graph,
+        logsRoot,
+        maxParallel,
+        errorPolicy,
+      );
+    }
 
     // For "ignore" error policy, filter out failed results for counting purposes
     const countableResults =
@@ -253,42 +313,72 @@ export class ParallelHandler implements Handler {
     const failCount = countableResults.filter(
       (r) => r.status === StageStatus.FAIL,
     ).length;
+    const waitingCount = countableResults.filter(
+      (r) => r.status === StageStatus.WAITING,
+    ).length;
 
     context.set("parallel.results", JSON.stringify(results));
 
     // Evaluate join policy
     if (joinPolicy === "first_success") {
-      return successCount > 0
-        ? successOutcome({
-            notes: `${successCount}/${results.length} branches succeeded`,
-          })
-        : failOutcome("All branches failed");
+      if (successCount > 0) {
+        return successOutcome({
+          notes: `${successCount}/${results.length} branches succeeded`,
+        });
+      }
+      if (waitingCount > 0) {
+        return {
+          status: StageStatus.WAITING,
+          notes: `${waitingCount}/${results.length} branches are waiting for input`,
+        };
+      }
+      return failOutcome("All branches failed");
     }
 
     if (joinPolicy === "k_of_n") {
       const k = parseInt(String(node.attrs["join_k"] ?? "1"), 10);
-      return successCount >= k
-        ? successOutcome({
-            notes: `${successCount}/${results.length} branches succeeded (k=${k})`,
-          })
-        : failOutcome(
-            `Only ${successCount}/${results.length} branches succeeded, need ${k}`,
-          );
+      if (successCount >= k) {
+        return successOutcome({
+          notes: `${successCount}/${results.length} branches succeeded (k=${k})`,
+        });
+      }
+      if (waitingCount > 0 && successCount + waitingCount >= k) {
+        return {
+          status: StageStatus.WAITING,
+          notes: `${successCount}/${results.length} branches succeeded, waiting for ${waitingCount} branches (k=${k})`,
+        };
+      }
+      return failOutcome(
+        `Only ${successCount}/${results.length} branches succeeded, need ${k}`,
+      );
     }
 
     if (joinPolicy === "quorum") {
       const fraction = parseFloat(String(node.attrs["join_quorum"] ?? "0.5"));
       const required = Math.ceil(results.length * fraction);
-      return successCount >= required
-        ? successOutcome({
-            notes: `${successCount}/${results.length} branches succeeded (quorum=${fraction}, required=${required})`,
-          })
-        : failOutcome(
-            `Only ${successCount}/${results.length} branches succeeded, need ${required} (quorum=${fraction})`,
-          );
+      if (successCount >= required) {
+        return successOutcome({
+          notes: `${successCount}/${results.length} branches succeeded (quorum=${fraction}, required=${required})`,
+        });
+      }
+      if (waitingCount > 0 && successCount + waitingCount >= required) {
+        return {
+          status: StageStatus.WAITING,
+          notes: `${successCount}/${results.length} branches succeeded, waiting for ${waitingCount} branches (quorum=${fraction}, required=${required})`,
+        };
+      }
+      return failOutcome(
+        `Only ${successCount}/${results.length} branches succeeded, need ${required} (quorum=${fraction})`,
+      );
     }
 
     // wait_all (default)
+    if (failCount === 0 && waitingCount > 0) {
+      return {
+        status: StageStatus.WAITING,
+        notes: `${waitingCount}/${results.length} branches are waiting for input`,
+      };
+    }
     if (failCount === 0) {
       return successOutcome({
         notes: `All ${results.length} branches succeeded`,
@@ -298,6 +388,28 @@ export class ParallelHandler implements Handler {
       status: StageStatus.PARTIAL_SUCCESS,
       notes: `${successCount}/${results.length} branches succeeded`,
     };
+  }
+
+  private readResumableResults(
+    context: Context,
+    expectedLength: number,
+  ): Outcome[] | null {
+    const raw = context.getString("parallel.results");
+    if (!raw) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(raw) as Outcome[];
+      if (!Array.isArray(parsed) || parsed.length !== expectedLength) {
+        return null;
+      }
+      if (!parsed.some((result) => result.status === StageStatus.WAITING)) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -317,10 +429,53 @@ export class ParallelHandler implements Handler {
     maxParallel: number,
     errorPolicy: string,
   ): Promise<Outcome[]> {
-    const results: Outcome[] = new Array(branches.length);
+    const branchIndexes = branches.map((_, index) => index);
+    const resultsMap = await this.executeBranchIndexes(
+      branchIndexes,
+      branches,
+      context,
+      graph,
+      logsRoot,
+      maxParallel,
+      errorPolicy,
+    );
+    return branchIndexes.map(
+      (index) => resultsMap.get(index) ?? failOutcome("Branch execution did not produce an outcome"),
+    );
+  }
+
+  private async executeBranchSubset(
+    branchIndexes: number[],
+    branches: ReturnType<Graph["outgoingEdges"]>,
+    context: Context,
+    graph: Graph,
+    logsRoot: string,
+    maxParallel: number,
+    errorPolicy: string,
+  ): Promise<Map<number, Outcome>> {
+    return this.executeBranchIndexes(
+      branchIndexes,
+      branches,
+      context,
+      graph,
+      logsRoot,
+      maxParallel,
+      errorPolicy,
+    );
+  }
+
+  private async executeBranchIndexes(
+    branchIndexes: number[],
+    branches: ReturnType<Graph["outgoingEdges"]>,
+    context: Context,
+    graph: Graph,
+    logsRoot: string,
+    maxParallel: number,
+    errorPolicy: string,
+  ): Promise<Map<number, Outcome>> {
+    const results = new Map<number, Outcome>();
     let cancelled = false;
 
-    // Semaphore for bounded parallelism
     let active = 0;
     const waitQueue: Array<() => void> = [];
 
@@ -345,7 +500,7 @@ export class ParallelHandler implements Handler {
 
     const executeBranch = async (index: number): Promise<void> => {
       if (cancelled) {
-        results[index] = failOutcome("Cancelled due to fail_fast policy");
+        results.set(index, failOutcome("Cancelled due to fail_fast policy"));
         return;
       }
 
@@ -353,7 +508,7 @@ export class ParallelHandler implements Handler {
 
       if (cancelled) {
         releaseSlot();
-        results[index] = failOutcome("Cancelled due to fail_fast policy");
+        results.set(index, failOutcome("Cancelled due to fail_fast policy"));
         return;
       }
 
@@ -365,17 +520,13 @@ export class ParallelHandler implements Handler {
           graph,
           logsRoot,
         );
-        results[index] = outcome;
+        results.set(index, outcome);
 
-        // Check fail_fast: if this branch failed, cancel remaining
-        if (
-          errorPolicy === "fail_fast" &&
-          outcome.status === StageStatus.FAIL
-        ) {
+        if (errorPolicy === "fail_fast" && outcome.status === StageStatus.FAIL) {
           cancelled = true;
         }
       } catch (err) {
-        results[index] = failOutcome(String(err));
+        results.set(index, failOutcome(String(err)));
         if (errorPolicy === "fail_fast") {
           cancelled = true;
         }
@@ -384,10 +535,7 @@ export class ParallelHandler implements Handler {
       }
     };
 
-    // Launch all branches; the semaphore limits concurrency
-    const promises = branches.map((_, index) => executeBranch(index));
-    await Promise.all(promises);
-
+    await Promise.all(branchIndexes.map((index) => executeBranch(index)));
     return results;
   }
 }
@@ -450,9 +598,10 @@ export class FanInHandler implements Handler {
     const statusRank: Record<string, number> = {
       [StageStatus.SUCCESS]: 0,
       [StageStatus.PARTIAL_SUCCESS]: 1,
-      [StageStatus.RETRY]: 2,
-      [StageStatus.FAIL]: 3,
-      [StageStatus.SKIPPED]: 4,
+      [StageStatus.WAITING]: 2,
+      [StageStatus.RETRY]: 3,
+      [StageStatus.FAIL]: 4,
+      [StageStatus.SKIPPED]: 5,
     };
 
     results.sort((a, b) => (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9));

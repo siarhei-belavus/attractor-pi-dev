@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as http from "node:http";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import { createServer, type HttpPipelineServer } from "../src/server/index.js";
 
 /** Simple pipeline DOT source for testing */
@@ -32,6 +35,7 @@ const INVALID_DOT = "this is not valid DOT syntax {{{";
 
 let server: HttpPipelineServer;
 let baseUrl: string;
+let tmpLogsRoot: string;
 
 /** Make an HTTP request and return parsed JSON response */
 function request(
@@ -184,8 +188,60 @@ async function waitForStatus(
   );
 }
 
+async function restartServer(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    server.close(() => resolve());
+  });
+  server = createServer({ logsRoot: tmpLogsRoot }) as HttpPipelineServer;
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const addr = server.address();
+  if (addr && typeof addr === "object") {
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+  }
+}
+
+async function waitForPendingQuestion(
+  runId: string,
+  maxMs = 5000,
+): Promise<{ id: string; stage: string }> {
+  const status = await waitForStatus(runId, ["waiting_for_answer"], maxMs);
+  const pending = status.pendingQuestion as
+    | { id?: string; stage?: string }
+    | undefined;
+  if (!pending?.id || !pending?.stage) {
+    throw new Error(`Run ${runId} is waiting but has no pendingQuestion`);
+  }
+  return { id: pending.id, stage: pending.stage };
+}
+
+function listTmpFilesRecursive(root: string): string[] {
+  if (!fs.existsSync(root)) {
+    return [];
+  }
+  const found: string[] = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+      if (entry.name.endsWith(".tmp")) {
+        found.push(fullPath);
+      }
+    }
+  }
+  return found;
+}
+
 beforeEach(async () => {
-  server = createServer() as HttpPipelineServer;
+  tmpLogsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "server-test-"));
+  server = createServer({ logsRoot: tmpLogsRoot }) as HttpPipelineServer;
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", () => resolve());
   });
@@ -199,6 +255,7 @@ afterEach(async () => {
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
   });
+  fs.rmSync(tmpLogsRoot, { recursive: true, force: true });
 });
 
 describe("HTTP Server: POST /pipelines", () => {
@@ -328,33 +385,109 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
     expect(data.error).toContain("No pending question");
   });
 
-  it("delivers answers for human-in-the-loop questions", async () => {
+  it("persists pending question and run-state on disk", async () => {
     const { data: runData } = await request("POST", "/pipelines", {
       dotSource: HUMAN_GATE_DOT,
     });
     const runId = runData.runId as string;
+    const pending = await waitForPendingQuestion(runId);
 
-    // Wait for the pipeline to hit the human gate
-    const status = await waitForStatus(runId, [
-      "waiting_for_answer",
-      "completed",
-    ]);
+    const questionPath = path.join(
+      tmpLogsRoot,
+      runId,
+      "questions",
+      `${pending.id}.json`,
+    );
+    expect(fs.existsSync(questionPath)).toBe(true);
+    const question = JSON.parse(fs.readFileSync(questionPath, "utf-8")) as {
+      status: string;
+      stage: string;
+    };
+    expect(question.status).toBe("pending");
+    expect(question.stage).toBe("review");
 
-    if (status.status === "waiting_for_answer") {
-      // Submit an answer
-      const { statusCode, data } = await request(
-        "POST",
-        `/pipelines/${runId}/questions/q1/answer`,
-        { value: "A" },
-      );
-      expect(statusCode).toBe(200);
-      expect(data.accepted).toBe(true);
+    const runStatePath = path.join(tmpLogsRoot, runId, "run-state.json");
+    expect(fs.existsSync(runStatePath)).toBe(true);
+    const runState = JSON.parse(fs.readFileSync(runStatePath, "utf-8")) as {
+      status: string;
+      pendingQuestionId?: string | null;
+    };
+    expect(runState.status).toBe("waiting_for_answer");
+    expect(runState.pendingQuestionId).toBe(pending.id);
 
-      // Wait for the pipeline to complete
-      const finalStatus = await waitForStatus(runId, ["completed", "failed"]);
-      expect(finalStatus.status).toBe("completed");
-    }
-    // If already completed, the auto-approve or simulation handled it
+    await request("POST", `/pipelines/${runId}/questions/${pending.id}/answer`, {
+      value: "A",
+    });
+    await waitForStatus(runId, ["completed", "failed"]);
+  });
+
+  it("delivers answer for the correct qid and resumes pipeline", async () => {
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: HUMAN_GATE_DOT,
+    });
+    const runId = runData.runId as string;
+    const pending = await waitForPendingQuestion(runId);
+
+    const { statusCode, data } = await request(
+      "POST",
+      `/pipelines/${runId}/questions/${pending.id}/answer`,
+      { value: "A" },
+    );
+    expect(statusCode).toBe(200);
+    expect(data.accepted).toBe(true);
+
+    const finalStatus = await waitForStatus(runId, ["completed", "failed"]);
+    expect(finalStatus.status).toBe("completed");
+  });
+
+  it("rejects wrong qid", async () => {
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: HUMAN_GATE_DOT,
+    });
+    const runId = runData.runId as string;
+    const pending = await waitForPendingQuestion(runId);
+
+    const wrongQuestionId =
+      pending.id === "q-0001" ? "q-9999" : "q-0001";
+    const wrong = await request(
+      "POST",
+      `/pipelines/${runId}/questions/${wrongQuestionId}/answer`,
+      { value: "A" },
+    );
+    expect(wrong.statusCode).toBe(409);
+    expect(wrong.data.error).toContain("stale");
+
+    await request("POST", `/pipelines/${runId}/questions/${pending.id}/answer`, {
+      value: "A",
+    });
+    await waitForStatus(runId, ["completed", "failed"]);
+  });
+
+  it("rejects duplicate answer submit for the same qid", async () => {
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: HUMAN_GATE_DOT,
+    });
+    const runId = runData.runId as string;
+    const pending = await waitForPendingQuestion(runId);
+
+    const first = await request(
+      "POST",
+      `/pipelines/${runId}/questions/${pending.id}/answer`,
+      { value: "A" },
+    );
+    expect(first.statusCode).toBe(200);
+
+    const second = await request(
+      "POST",
+      `/pipelines/${runId}/questions/${pending.id}/answer`,
+      { value: "A" },
+    );
+    expect(second.statusCode).toBe(409);
+    expect(String(second.data.error)).toMatch(
+      /already answered|No pending question/i,
+    );
+
+    await waitForStatus(runId, ["completed", "failed"]);
   });
 
   it("rejects answer with missing value", async () => {
@@ -362,25 +495,285 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
       dotSource: HUMAN_GATE_DOT,
     });
     const runId = runData.runId as string;
+    const pending = await waitForPendingQuestion(runId, 4000);
 
-    // Wait for potential question
-    await waitForStatus(runId, ["waiting_for_answer", "completed"], 2000).catch(
-      () => {},
+    const { statusCode, data } = await request(
+      "POST",
+      `/pipelines/${runId}/questions/${pending.id}/answer`,
+      { text: "some text but no value" },
+    );
+    expect(statusCode).toBe(400);
+    expect(data.error).toContain("Missing answer value");
+
+    await request("POST", `/pipelines/${runId}/questions/${pending.id}/answer`, {
+      value: "A",
+    });
+    await waitForStatus(runId, ["completed", "failed"]);
+  });
+
+  it("restores waiting question after server restart", async () => {
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: HUMAN_GATE_DOT,
+    });
+    const runId = runData.runId as string;
+    const pendingBeforeRestart = await waitForPendingQuestion(runId);
+
+    await restartServer();
+
+    const statusAfterRestart = await waitForStatus(runId, ["waiting_for_answer"]);
+    const pendingAfterRestart = statusAfterRestart.pendingQuestion as {
+      id: string;
+    };
+    expect(pendingAfterRestart.id).toBe(pendingBeforeRestart.id);
+
+    const answerResponse = await request(
+      "POST",
+      `/pipelines/${runId}/questions/${pendingAfterRestart.id}/answer`,
+      { value: "A" },
+    );
+    expect(answerResponse.statusCode).toBe(200);
+
+    const finalStatus = await waitForStatus(runId, ["completed", "failed"]);
+    expect(finalStatus.status).toBe("completed");
+  });
+
+  it("atomic durable saves preserve happy-path behavior", async () => {
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: HUMAN_GATE_DOT,
+    });
+    const runId = runData.runId as string;
+    const pending = await waitForPendingQuestion(runId);
+
+    const runDir = path.join(tmpLogsRoot, runId);
+    expect(fs.existsSync(path.join(runDir, "run-state.json"))).toBe(true);
+    expect(fs.existsSync(path.join(runDir, "checkpoint.json"))).toBe(true);
+    expect(
+      fs.existsSync(path.join(runDir, "questions", `${pending.id}.json`)),
+    ).toBe(true);
+    expect(listTmpFilesRecursive(runDir)).toEqual([]);
+
+    const answered = await request(
+      "POST",
+      `/pipelines/${runId}/questions/${pending.id}/answer`,
+      { value: "A" },
+    );
+    expect(answered.statusCode).toBe(200);
+    await waitForStatus(runId, ["completed"]);
+
+    expect(listTmpFilesRecursive(runDir)).toEqual([]);
+    expect(() =>
+      JSON.parse(fs.readFileSync(path.join(runDir, "run-state.json"), "utf-8")),
+    ).not.toThrow();
+    expect(() =>
+      JSON.parse(fs.readFileSync(path.join(runDir, "checkpoint.json"), "utf-8")),
+    ).not.toThrow();
+    expect(() =>
+      JSON.parse(
+        fs.readFileSync(
+          path.join(runDir, "questions", `${pending.id}.json`),
+          "utf-8",
+        ),
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe("HTTP Server: recovery hardening for malformed durable JSON", () => {
+  it("recovered run status includes context restored from checkpoint", async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+
+    const run = path.join(tmpLogsRoot, "run-1");
+    fs.mkdirSync(run, { recursive: true });
+    fs.writeFileSync(
+      path.join(run, "run-state.json"),
+      JSON.stringify({
+        runId: "run-1",
+        status: "waiting_for_answer",
+        currentNode: "review",
+        completedNodes: ["start"],
+        pendingQuestionId: "q-0001",
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    fs.writeFileSync(
+      path.join(run, "checkpoint.json"),
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        currentNode: "start",
+        completedNodes: ["start"],
+        nodeRetries: {},
+        context: {
+          "graph.goal": "Recovered goal",
+          "custom.key": "recovered-value",
+          "internal.waiting_for_question_id": "q-0001",
+        },
+        logs: [],
+        nodeOutcomes: {
+          start: { status: "success" },
+        },
+        waitingForQuestionId: "q-0001",
+      }),
     );
 
-    const run = server.runs.get(runId);
-    if (run?.pendingQuestion) {
-      const { statusCode, data } = await request(
-        "POST",
-        `/pipelines/${runId}/questions/q1/answer`,
-        { text: "some text but no value" },
-      );
-      expect(statusCode).toBe(400);
-      expect(data.error).toContain("Missing answer value");
-
-      // Clean up: resolve the pending question so the pipeline doesn't hang
-      run.pendingQuestion.resolve({ value: "A" });
+    server = createServer({ logsRoot: tmpLogsRoot }) as HttpPipelineServer;
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const addr = server.address();
+    if (addr && typeof addr === "object") {
+      baseUrl = `http://127.0.0.1:${addr.port}`;
     }
+
+    const status = await request("GET", "/pipelines/run-1");
+    expect(status.statusCode).toBe(200);
+    expect(status.data.status).toBe("waiting_for_answer");
+    expect((status.data.context as Record<string, unknown>)["custom.key"]).toBe(
+      "recovered-value",
+    );
+  });
+
+  it("malformed run-state.json does not crash server startup", async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+
+    const brokenRun = path.join(tmpLogsRoot, "run-1");
+    fs.mkdirSync(brokenRun, { recursive: true });
+    fs.writeFileSync(path.join(brokenRun, "run-state.json"), "{");
+
+    const healthyRun = path.join(tmpLogsRoot, "run-2");
+    fs.mkdirSync(healthyRun, { recursive: true });
+    fs.writeFileSync(
+      path.join(healthyRun, "run-state.json"),
+      JSON.stringify({
+        runId: "run-2",
+        status: "completed",
+        currentNode: "exit",
+        completedNodes: ["start", "exit"],
+        pendingQuestionId: null,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+
+    server = createServer({ logsRoot: tmpLogsRoot }) as HttpPipelineServer;
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const addr = server.address();
+    if (addr && typeof addr === "object") {
+      baseUrl = `http://127.0.0.1:${addr.port}`;
+    }
+
+    const healthy = await request("GET", "/pipelines/run-2");
+    expect(healthy.statusCode).toBe(200);
+    expect(healthy.data.status).toBe("completed");
+
+    const broken = await request("GET", "/pipelines/run-1");
+    expect(broken.statusCode).toBe(404);
+  });
+
+  it("malformed question file does not crash recovery of unrelated runs", async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+
+    const run1 = path.join(tmpLogsRoot, "run-1");
+    fs.mkdirSync(path.join(run1, "questions"), { recursive: true });
+    fs.writeFileSync(
+      path.join(run1, "run-state.json"),
+      JSON.stringify({
+        runId: "run-1",
+        status: "waiting_for_answer",
+        currentNode: "review",
+        completedNodes: ["start"],
+        pendingQuestionId: "q-0001",
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    fs.writeFileSync(path.join(run1, "questions", "q-0001.json"), "{");
+
+    const run2 = path.join(tmpLogsRoot, "run-2");
+    fs.mkdirSync(run2, { recursive: true });
+    fs.writeFileSync(
+      path.join(run2, "run-state.json"),
+      JSON.stringify({
+        runId: "run-2",
+        status: "completed",
+        currentNode: "exit",
+        completedNodes: ["start", "exit"],
+        pendingQuestionId: null,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+
+    server = createServer({ logsRoot: tmpLogsRoot }) as HttpPipelineServer;
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const addr = server.address();
+    if (addr && typeof addr === "object") {
+      baseUrl = `http://127.0.0.1:${addr.port}`;
+    }
+
+    const healthy = await request("GET", "/pipelines/run-2");
+    expect(healthy.statusCode).toBe(200);
+    expect(healthy.data.status).toBe("completed");
+
+    const waiting = await request("GET", "/pipelines/run-1");
+    expect(waiting.statusCode).toBe(200);
+    expect(waiting.data.status).toBe("waiting_for_answer");
+    expect(waiting.data.pendingQuestion).toBeUndefined();
+  });
+
+  it("malformed checkpoint for one run does not block other run recovery", async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+
+    const run1 = path.join(tmpLogsRoot, "run-1");
+    fs.mkdirSync(run1, { recursive: true });
+    fs.writeFileSync(
+      path.join(run1, "run-state.json"),
+      JSON.stringify({
+        runId: "run-1",
+        status: "running",
+        currentNode: "start",
+        completedNodes: [],
+        pendingQuestionId: null,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    fs.writeFileSync(path.join(run1, "pipeline.dot"), SIMPLE_DOT);
+    fs.writeFileSync(path.join(run1, "checkpoint.json"), "{");
+
+    const run2 = path.join(tmpLogsRoot, "run-2");
+    fs.mkdirSync(run2, { recursive: true });
+    fs.writeFileSync(
+      path.join(run2, "run-state.json"),
+      JSON.stringify({
+        runId: "run-2",
+        status: "completed",
+        currentNode: "exit",
+        completedNodes: ["start", "exit"],
+        pendingQuestionId: null,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+
+    server = createServer({ logsRoot: tmpLogsRoot }) as HttpPipelineServer;
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const addr = server.address();
+    if (addr && typeof addr === "object") {
+      baseUrl = `http://127.0.0.1:${addr.port}`;
+    }
+
+    const healthy = await request("GET", "/pipelines/run-2");
+    expect(healthy.statusCode).toBe(200);
+    expect(healthy.data.status).toBe("completed");
   });
 });
 
@@ -439,6 +832,32 @@ describe("HTTP Server: POST /pipelines/{id}/cancel", () => {
       const { data: statusData } = await request("GET", `/pipelines/${runId}`);
       expect(statusData.status).toBe("cancelled");
     }
+  });
+
+  it("cancel during pending question unblocks run safely", async () => {
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: HUMAN_GATE_DOT,
+    });
+    const runId = runData.runId as string;
+    const pending = await waitForPendingQuestion(runId);
+
+    const cancelResponse = await request("POST", `/pipelines/${runId}/cancel`);
+    expect(cancelResponse.statusCode).toBe(200);
+    expect(cancelResponse.data.status).toBe("cancelled");
+
+    const status = await waitForStatus(runId, ["cancelled"]);
+    expect(status.status).toBe("cancelled");
+
+    const questionPath = path.join(
+      tmpLogsRoot,
+      runId,
+      "questions",
+      `${pending.id}.json`,
+    );
+    const question = JSON.parse(fs.readFileSync(questionPath, "utf-8")) as {
+      status: string;
+    };
+    expect(question.status).toBe("cancelled");
   });
 
   it("returns 409 for already completed pipeline", async () => {

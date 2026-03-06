@@ -100,7 +100,10 @@ export class PipelineRunner {
       }
 
       // If the handler failed, stop the subgraph execution
-      if (lastOutcome.status === StageStatus.FAIL) {
+      if (
+        lastOutcome.status === StageStatus.FAIL ||
+        lastOutcome.status === StageStatus.WAITING
+      ) {
         return lastOutcome;
       }
 
@@ -303,6 +306,9 @@ export class PipelineRunner {
           nodeOutcomes: Object.fromEntries(nodeOutcomes),
           nodeRetries: termRetries,
           context: termSnap,
+          logs: [...context.getLogs()],
+          waitingForQuestionId:
+            context.getString("internal.waiting_for_question_id") || undefined,
         }).save(logsRoot);
         break;
       }
@@ -362,6 +368,48 @@ export class PipelineRunner {
         stageIndex,
       );
 
+      // Step 3: Apply context updates
+      if (outcome.contextUpdates) {
+        context.applyUpdates(outcome.contextUpdates as Record<string, unknown>);
+      }
+      context.set("outcome", outcome.status);
+      if (outcome.preferredLabel) {
+        context.set("preferred_label", outcome.preferredLabel);
+      }
+
+      // Waiting for human input: persist and stop execution without
+      // marking the current node as completed.
+      if (outcome.status === StageStatus.WAITING) {
+        lastOutcome = outcome;
+        const nodeRetries: Record<string, number> = {};
+        const snap = context.snapshot();
+        for (const [key, value] of Object.entries(snap)) {
+          if (key.startsWith("internal.retry_count.")) {
+            const nodeId = key.slice("internal.retry_count.".length);
+            nodeRetries[nodeId] = Number(value);
+          }
+        }
+        const lastCompletedNodeId =
+          completedNodes.length > 0 ? completedNodes[completedNodes.length - 1]! : "";
+        const checkpoint = new Checkpoint({
+          currentNode: lastCompletedNodeId,
+          completedNodes: [...completedNodes],
+          nodeOutcomes: Object.fromEntries(nodeOutcomes),
+          nodeRetries,
+          context: snap,
+          logs: [...context.getLogs()],
+          waitingForQuestionId:
+            context.getString("internal.waiting_for_question_id") || undefined,
+        });
+        checkpoint.save(logsRoot);
+        this.emitter.emit({
+          type: "checkpoint_saved",
+          nodeId: node.id,
+          timestamp: new Date().toISOString(),
+        });
+        break;
+      }
+
       const stageDuration = Date.now() - stageStart;
       this.emitter.emit({
         type: "stage_completed",
@@ -371,20 +419,11 @@ export class PipelineRunner {
         timestamp: new Date().toISOString(),
       });
 
-      // Step 3: Record completion
+      // Step 4: Record completion
       completedNodes.push(node.id);
       nodeOutcomes.set(node.id, outcome);
       lastOutcome = outcome;
       stageIndex++;
-
-      // Step 4: Apply context updates
-      if (outcome.contextUpdates) {
-        context.applyUpdates(outcome.contextUpdates as Record<string, unknown>);
-      }
-      context.set("outcome", outcome.status);
-      if (outcome.preferredLabel) {
-        context.set("preferred_label", outcome.preferredLabel);
-      }
 
       // Step 5: Save checkpoint
       const nodeRetries: Record<string, number> = {};
@@ -401,6 +440,9 @@ export class PipelineRunner {
         nodeOutcomes: Object.fromEntries(nodeOutcomes),
         nodeRetries,
         context: snap,
+        logs: [...context.getLogs()],
+        waitingForQuestionId:
+          context.getString("internal.waiting_for_question_id") || undefined,
       });
       checkpoint.save(logsRoot);
       this.emitter.emit({
@@ -460,7 +502,7 @@ export class PipelineRunner {
         artifactCount: completedNodes.length,
         timestamp: new Date().toISOString(),
       });
-    } else {
+    } else if (lastOutcome.status === StageStatus.FAIL) {
       this.emitter.emit({
         type: "pipeline_failed",
         error: lastOutcome.failureReason ?? "Pipeline failed",
@@ -490,6 +532,10 @@ export class PipelineRunner {
           outcome.status === StageStatus.SUCCESS ||
           outcome.status === StageStatus.PARTIAL_SUCCESS
         ) {
+          return outcome;
+        }
+
+        if (outcome.status === StageStatus.WAITING) {
           return outcome;
         }
 

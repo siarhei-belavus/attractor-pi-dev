@@ -87,6 +87,7 @@ describe("Checkpoint", () => {
       },
       context: { key: "value" },
       nodeRetries: { plan: 1 },
+      waitingForQuestionId: "q-0001",
     });
     cp.save(tmpDir);
 
@@ -101,6 +102,26 @@ describe("Checkpoint", () => {
     });
     expect(loaded.contextValues).toEqual({ key: "value" });
     expect(loaded.nodeRetries).toEqual({ plan: 1 });
+    expect(loaded.waitingForQuestionId).toBe("q-0001");
+  });
+
+  it("save uses atomic path without leftover tmp file", () => {
+    const cp = new Checkpoint({
+      currentNode: "start",
+      completedNodes: ["start"],
+      nodeOutcomes: { start: { status: StageStatus.SUCCESS } },
+      context: {},
+      nodeRetries: {},
+    });
+    cp.save(tmpDir);
+
+    expect(fs.existsSync(path.join(tmpDir, "checkpoint.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "checkpoint.json.tmp"))).toBe(false);
+  });
+
+  it("load throws clear error for malformed checkpoint JSON", () => {
+    fs.writeFileSync(path.join(tmpDir, "checkpoint.json"), "{");
+    expect(() => Checkpoint.load(tmpDir)).toThrow(/Failed to load checkpoint JSON/);
   });
 });
 

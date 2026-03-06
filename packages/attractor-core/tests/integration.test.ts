@@ -568,6 +568,92 @@ describe("Integration: Smoke Test (spec 11.13)", () => {
 });
 
 describe("Integration: Checkpoint Resume", () => {
+  it("checkpoint preserves nodeOutcomes", async () => {
+    const DOT = `
+      digraph PreserveOutcomes {
+        graph [goal="Preserve outcomes"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [type="partial_handler", prompt="Run A"]
+        start -> a -> exit
+      }
+    `;
+    const { graph } = preparePipeline(DOT);
+
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+    runner.registerHandler("partial_handler", {
+      async execute() {
+        return {
+          status: StageStatus.PARTIAL_SUCCESS,
+          notes: "accepted partial",
+        };
+      },
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.PARTIAL_SUCCESS);
+
+    const checkpoint = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "checkpoint.json"), "utf-8"),
+    ) as {
+      nodeOutcomes: Record<string, { status: string }>;
+    };
+    expect(checkpoint.nodeOutcomes.start.status).toBe(StageStatus.SUCCESS);
+    expect(checkpoint.nodeOutcomes.a.status).toBe(StageStatus.PARTIAL_SUCCESS);
+  });
+
+  it("resume uses restored last outcome for edge selection", async () => {
+    const DOT = `
+      digraph ResumeSelect {
+        graph [goal="Resume edge selection"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        chooser [type="manual_gate", prompt="Choose"]
+        success_path [type="track_path", prompt="Success path"]
+        fail_path [type="track_path", prompt="Fail path"]
+        start -> chooser
+        chooser -> success_path [condition="outcome=success"]
+        chooser -> fail_path [condition="outcome=fail"]
+        success_path -> exit
+        fail_path -> exit
+      }
+    `;
+    const { graph } = preparePipeline(DOT);
+
+    const checkpointDir = fs.mkdtempSync(path.join(os.tmpdir(), "resume-outcome-"));
+    new Checkpoint({
+      currentNode: "chooser",
+      completedNodes: ["start", "chooser"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        chooser: { status: StageStatus.FAIL, failureReason: "gate failed" },
+      },
+      nodeRetries: {},
+      context: { "graph.goal": "Resume edge selection", outcome: "fail" },
+    }).save(checkpointDir);
+
+    const executed: string[] = [];
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      resumeFrom: checkpointDir,
+    });
+    runner.registerHandler("track_path", {
+      async execute(node) {
+        executed.push(node.id);
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: { last_stage: node.id },
+        };
+      },
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(executed).toEqual(["fail_path"]);
+
+    fs.rmSync(checkpointDir, { recursive: true, force: true });
+  });
+
   it("resumes a pipeline from a checkpoint, skipping already-completed nodes", async () => {
     // Pipeline: start -> a -> b -> c -> exit
     // We'll run it fully first, create a checkpoint after "a",

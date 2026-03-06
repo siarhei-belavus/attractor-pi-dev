@@ -5,6 +5,7 @@ export enum StageStatus {
   RETRY = "retry",
   FAIL = "fail",
   SKIPPED = "skipped",
+  WAITING = "waiting",
 }
 
 /** Result of executing a node handler */

@@ -1,46 +1,30 @@
-/**
- * HTTP server mode for Attractor pipeline runner.
- *
- * Provides REST endpoints for web-based pipeline management (spec §9.5):
- *   POST   /pipelines                              - Start a pipeline
- *   GET    /pipelines/{id}                          - Get run status
- *   POST   /pipelines/{id}/cancel                   - Cancel a running pipeline
- *   GET    /pipelines/{id}/events                   - SSE event stream
- *   GET    /pipelines/{id}/graph                    - Get graph visualization
- *   GET    /pipelines/{id}/checkpoint               - Get checkpoint state
- *   GET    /pipelines/{id}/context                  - Get context key-value store
- *   POST   /pipelines/{id}/questions/{qid}/answer   - Submit human-in-the-loop answer
- *
- * Uses only Node.js built-in modules (http, child_process) - no external dependencies.
- * Per spec section 9.5.
- */
+import * as fs from "node:fs";
 import * as http from "node:http";
+import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { preparePipeline } from "../engine/pipeline.js";
 import { PipelineRunner } from "../engine/runner.js";
 import type { RunConfig, RunResult } from "../engine/runner.js";
 import type { PipelineEvent, EventListener } from "../events/index.js";
-import { CallbackInterviewer } from "../handlers/interviewers.js";
-import type { Question, Answer, CodergenBackend } from "../handlers/types.js";
-import { AnswerValue } from "../handlers/types.js";
+import type { Answer, CodergenBackend } from "../handlers/types.js";
+import { StageStatus } from "../state/types.js";
+import { Checkpoint } from "../state/checkpoint.js";
 import type { Graph } from "../model/graph.js";
+import { DurableInterviewer } from "./durable-interviewer.js";
+import { QuestionStore } from "./question-store.js";
+import type { QuestionRecord } from "./question-store.js";
+import { RunStateStore } from "./run-state.js";
+import type { RunStatus } from "./run-state.js";
 
-/** Status of a pipeline run */
-export type RunStatus = "running" | "completed" | "failed" | "waiting_for_answer" | "cancelled";
+export type { RunStatus } from "./run-state.js";
 
-/** Pending question awaiting a human answer */
-interface PendingQuestion {
-  question: Question;
-  resolve: (answer: Answer) => void;
-}
-
-/** State for an active pipeline run */
 export interface RunState {
   runId: string;
   status: RunStatus;
-  graph: Graph;
+  graph: Graph | null;
   dotSource: string;
-  runner: PipelineRunner;
+  logsRoot: string;
+  runner: PipelineRunner | null;
   result: RunResult | null;
   error: string | null;
   completedNodes: string[];
@@ -48,39 +32,34 @@ export interface RunState {
   context: Record<string, unknown>;
   events: PipelineEvent[];
   eventListeners: Set<EventListener>;
-  pendingQuestion: PendingQuestion | null;
+  pendingQuestionId: string | null;
   cancelled: boolean;
+  runStateStore: RunStateStore;
+  questionStore: QuestionStore;
 }
 
-/** Configuration for createServer */
 export interface ServerConfig {
   backend?: CodergenBackend | null;
   logsRoot?: string;
 }
 
-/**
- * Create an HTTP server for pipeline management.
- * Returns the server instance (not yet listening).
- */
 export function createServer(serverConfig: ServerConfig = {}): http.Server {
   const runs = new Map<string, RunState>();
+  const runsBaseRoot =
+    serverConfig.logsRoot ??
+    path.join(process.cwd(), ".attractor-runs");
+  fs.mkdirSync(runsBaseRoot, { recursive: true });
   let nextRunId = 1;
 
   function generateRunId(): string {
-    return `run-${nextRunId++}`;
+    while (runs.has(`run-${nextRunId}`)) {
+      nextRunId++;
+    }
+    const runId = `run-${nextRunId}`;
+    nextRunId++;
+    return runId;
   }
 
-  /** Read the request body as a string */
-  function readBody(req: http.IncomingMessage): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const chunks: Buffer[] = [];
-      req.on("data", (chunk: Buffer) => chunks.push(chunk));
-      req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-      req.on("error", reject);
-    });
-  }
-
-  /** Send a JSON response */
   function sendJson(
     res: http.ServerResponse,
     statusCode: number,
@@ -94,7 +73,6 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     res.end(body);
   }
 
-  /** Send an error response */
   function sendError(
     res: http.ServerResponse,
     statusCode: number,
@@ -103,13 +81,248 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     sendJson(res, statusCode, { error: message });
   }
 
-  /** Parse URL path and extract segments */
   function parsePath(url: string): string[] {
     const pathname = new URL(url, "http://localhost").pathname;
     return pathname.split("/").filter(Boolean);
   }
 
-  /** POST /pipelines - Start a pipeline */
+  function readBody(req: http.IncomingMessage): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+      req.on("error", reject);
+    });
+  }
+
+  function hydrateFromRunState(run: RunState): void {
+    const durable = run.runStateStore.load();
+    if (!durable) {
+      return;
+    }
+    run.status = durable.status;
+    run.currentNode = durable.currentNode;
+    run.completedNodes = [...durable.completedNodes];
+    run.pendingQuestionId = durable.pendingQuestionId;
+    run.error = durable.error ?? run.error;
+
+    if (!run.result && Checkpoint.exists(run.logsRoot)) {
+      try {
+        const checkpoint = Checkpoint.load(run.logsRoot);
+        run.context = checkpoint.contextValues;
+      } catch {
+        // Keep previous in-memory context when checkpoint is malformed.
+      }
+    }
+  }
+
+  function persistRunState(run: RunState): void {
+    run.runStateStore.save({
+      runId: run.runId,
+      status: run.status,
+      currentNode: run.currentNode,
+      completedNodes: [...run.completedNodes],
+      pendingQuestionId: run.pendingQuestionId,
+      updatedAt: new Date().toISOString(),
+      ...(run.error ? { error: run.error } : {}),
+    });
+  }
+
+  function resolvePendingQuestion(run: RunState): QuestionRecord | null {
+    if (run.pendingQuestionId) {
+      const direct = run.questionStore.get(run.pendingQuestionId);
+      if (direct && direct.status === "pending") {
+        return direct;
+      }
+    }
+    const pending = run.questionStore.listPending(run.runId);
+    if (pending.length === 0) {
+      return null;
+    }
+    const newest = pending.sort((left, right) =>
+      right.id.localeCompare(left.id),
+    )[0];
+    return newest ?? null;
+  }
+
+  function createRunState(
+    runId: string,
+    logsRoot: string,
+    dotSource: string,
+    graph: Graph | null,
+    initialStatus: RunStatus,
+  ): RunState {
+    const runStateStore = new RunStateStore(logsRoot);
+    const questionStore = new QuestionStore(logsRoot);
+    return {
+      runId,
+      status: initialStatus,
+      graph,
+      dotSource,
+      logsRoot,
+      runner: null,
+      result: null,
+      error: null,
+      completedNodes: [],
+      currentNode: null,
+      context: {},
+      events: [],
+      eventListeners: new Set(),
+      pendingQuestionId: null,
+      cancelled: initialStatus === "cancelled",
+      runStateStore,
+      questionStore,
+    };
+  }
+
+  function emitEvent(run: RunState, event: PipelineEvent): void {
+    run.events.push(event);
+    for (const listener of run.eventListeners) {
+      listener(event);
+    }
+  }
+
+  function startRunner(run: RunState, resumeFrom?: string): void {
+    if (!run.graph) {
+      run.status = "failed";
+      run.error = "Run graph is unavailable";
+      persistRunState(run);
+      return;
+    }
+
+    const interviewer = new DurableInterviewer(run.runId, run.questionStore, {
+      onWaiting: (question) => {
+        run.status = "waiting_for_answer";
+        run.pendingQuestionId = question.id;
+        persistRunState(run);
+      },
+    });
+
+    const runConfig: RunConfig = {
+      backend: serverConfig.backend ?? null,
+      interviewer,
+      logsRoot: run.logsRoot,
+      ...(resumeFrom ? { resumeFrom } : {}),
+      onEvent: (event: PipelineEvent) => {
+        if (event.type === "stage_started") {
+          run.currentNode = event.name;
+          if (!run.cancelled && run.status !== "waiting_for_answer") {
+            run.status = "running";
+          }
+          persistRunState(run);
+        }
+        if (event.type === "stage_completed") {
+          if (!run.completedNodes.includes(event.name)) {
+            run.completedNodes.push(event.name);
+          }
+          persistRunState(run);
+        }
+        emitEvent(run, event);
+      },
+    };
+
+    const runner = new PipelineRunner(runConfig);
+    run.runner = runner;
+
+    runner
+      .run(run.graph)
+      .then((result: RunResult) => {
+        if (run.cancelled) {
+          return;
+        }
+        run.result = result;
+        if (result.outcome.status === StageStatus.WAITING) {
+          run.status = "waiting_for_answer";
+          run.pendingQuestionId =
+            result.context.getString("internal.waiting_for_question_id") || null;
+        } else {
+          run.status = result.outcome.status === StageStatus.FAIL ? "failed" : "completed";
+          run.pendingQuestionId = null;
+        }
+        run.completedNodes = [...result.completedNodes];
+        if (result.outcome.status !== StageStatus.WAITING) {
+          run.currentNode = run.completedNodes[run.completedNodes.length - 1] ?? null;
+        }
+        run.context = result.context.snapshot();
+        run.error = null;
+        persistRunState(run);
+      })
+      .catch((err: unknown) => {
+        if (run.cancelled) {
+          return;
+        }
+        run.status = "failed";
+        run.error = String(err);
+        run.pendingQuestionId = null;
+        persistRunState(run);
+      });
+  }
+
+  function recoverRunsFromDisk(): void {
+    const entries = fs.readdirSync(runsBaseRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      try {
+        const runId = entry.name;
+        const logsRoot = path.join(runsBaseRoot, runId);
+        const runStateStore = new RunStateStore(logsRoot);
+        const durable = runStateStore.load();
+        if (!durable) {
+          continue;
+        }
+
+        const runMatch = /^run-(\d+)$/.exec(runId);
+        if (runMatch) {
+          const runNum = Number(runMatch[1]);
+          if (Number.isFinite(runNum)) {
+            nextRunId = Math.max(nextRunId, runNum + 1);
+          }
+        }
+
+        const dotPath = path.join(logsRoot, "pipeline.dot");
+        const dotSource = fs.existsSync(dotPath)
+          ? fs.readFileSync(dotPath, "utf-8")
+          : "";
+
+        let graph: Graph | null = null;
+        if (dotSource) {
+          try {
+            graph = preparePipeline(dotSource).graph;
+          } catch {
+            graph = null;
+          }
+        }
+
+        const run = createRunState(runId, logsRoot, dotSource, graph, durable.status);
+        run.currentNode = durable.currentNode;
+        run.completedNodes = [...durable.completedNodes];
+        run.pendingQuestionId = durable.pendingQuestionId;
+        run.error = durable.error ?? null;
+        run.cancelled = durable.status === "cancelled";
+        if (Checkpoint.exists(logsRoot)) {
+          try {
+            run.context = Checkpoint.load(logsRoot).contextValues;
+          } catch {
+            // Skip broken checkpoint context; run metadata is still recoverable.
+          }
+        }
+        runs.set(runId, run);
+      } catch {
+        // Ignore malformed run directories to keep startup/recovery available.
+      }
+    }
+
+    for (const run of runs.values()) {
+      if (run.status === "running") {
+        startRunner(run, run.logsRoot);
+      }
+    }
+  }
+
+  recoverRunsFromDisk();
+
   async function handlePostPipelines(
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -122,7 +335,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       return;
     }
 
-    let parsed: { dotSource?: string; config?: Record<string, unknown> };
+    let parsed: { dotSource?: string };
     try {
       parsed = JSON.parse(body);
     } catch {
@@ -135,107 +348,36 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       return;
     }
 
-    // Parse and validate the DOT source
     let graph: Graph;
     try {
-      const result = preparePipeline(parsed.dotSource);
-      graph = result.graph;
+      graph = preparePipeline(parsed.dotSource).graph;
     } catch (err) {
       sendError(res, 400, `Invalid DOT source: ${err}`);
       return;
     }
 
     const runId = generateRunId();
+    const logsRoot = path.join(runsBaseRoot, runId);
+    fs.mkdirSync(logsRoot, { recursive: true });
+    fs.writeFileSync(path.join(logsRoot, "pipeline.dot"), parsed.dotSource);
 
-    // Create run state
-    const runState: RunState = {
-      runId,
-      status: "running",
-      graph,
-      dotSource: parsed.dotSource,
-      runner: null as unknown as PipelineRunner,
-      result: null,
-      error: null,
-      completedNodes: [],
-      currentNode: null,
-      context: {},
-      events: [],
-      eventListeners: new Set(),
-      pendingQuestion: null,
-      cancelled: false,
-    };
-
-    // Create a callback-based interviewer that queues questions
-    const interviewer = new CallbackInterviewer(
-      (question: Question): Promise<Answer> => {
-        return new Promise<Answer>((resolve) => {
-          runState.pendingQuestion = { question, resolve };
-          runState.status = "waiting_for_answer";
-        });
-      },
-    );
-
-    // Create the pipeline runner
-    const runConfig: RunConfig = {
-      backend: serverConfig.backend ?? null,
-      interviewer,
-      logsRoot: serverConfig.logsRoot,
-      onEvent: (event: PipelineEvent) => {
-        runState.events.push(event);
-
-        // Track current node and completed nodes from events
-        if (event.type === "stage_started") {
-          runState.currentNode = event.name;
-        }
-        if (event.type === "stage_completed") {
-          if (!runState.completedNodes.includes(event.name)) {
-            runState.completedNodes.push(event.name);
-          }
-        }
-
-        // Notify SSE listeners
-        for (const listener of runState.eventListeners) {
-          listener(event);
-        }
-      },
-    };
-
-    const runner = new PipelineRunner(runConfig);
-    runState.runner = runner;
-    runs.set(runId, runState);
-
-    // Start pipeline execution in the background
-    runner
-      .run(graph)
-      .then((result: RunResult) => {
-        // If the pipeline was cancelled, don't overwrite the cancelled status
-        if (runState.cancelled) return;
-        runState.result = result;
-        runState.status =
-          result.outcome.status === "fail" ? "failed" : "completed";
-        runState.completedNodes = result.completedNodes;
-        runState.context = result.context.snapshot();
-      })
-      .catch((err: unknown) => {
-        // If the pipeline was cancelled, don't overwrite the cancelled status
-        if (runState.cancelled) return;
-        runState.status = "failed";
-        runState.error = String(err);
-      });
+    const run = createRunState(runId, logsRoot, parsed.dotSource, graph, "running");
+    runs.set(runId, run);
+    persistRunState(run);
+    startRunner(run);
 
     sendJson(res, 201, { runId });
   }
 
-  /** GET /pipelines/{id} - Get run status */
-  function handleGetStatus(
-    res: http.ServerResponse,
-    runId: string,
-  ): void {
+  function handleGetStatus(res: http.ServerResponse, runId: string): void {
     const run = runs.get(runId);
     if (!run) {
       sendError(res, 404, `Unknown runId: ${runId}`);
       return;
     }
+
+    hydrateFromRunState(run);
+    const pendingQuestion = resolvePendingQuestion(run);
 
     const response: Record<string, unknown> = {
       runId: run.runId,
@@ -245,12 +387,15 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       context: run.context,
     };
 
-    if (run.status === "waiting_for_answer" && run.pendingQuestion) {
+    if (pendingQuestion) {
       response.pendingQuestion = {
-        text: run.pendingQuestion.question.text,
-        type: run.pendingQuestion.question.type,
-        options: run.pendingQuestion.question.options,
-        stage: run.pendingQuestion.question.stage,
+        id: pendingQuestion.id,
+        status: pendingQuestion.status,
+        text: pendingQuestion.question.text,
+        type: pendingQuestion.question.type,
+        options: pendingQuestion.question.options,
+        stage: pendingQuestion.stage,
+        createdAt: pendingQuestion.createdAt,
       };
     }
 
@@ -266,52 +411,44 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     sendJson(res, 200, response);
   }
 
-  /** POST /pipelines/{id}/cancel - Cancel a running pipeline */
-  function handlePostCancel(
-    res: http.ServerResponse,
-    runId: string,
-  ): void {
+  function handlePostCancel(res: http.ServerResponse, runId: string): void {
     const run = runs.get(runId);
     if (!run) {
       sendError(res, 404, `Unknown runId: ${runId}`);
       return;
     }
 
-    if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
+    hydrateFromRunState(run);
+    if (
+      run.status === "completed" ||
+      run.status === "failed" ||
+      run.status === "cancelled"
+    ) {
       sendError(res, 409, `Pipeline is already ${run.status}`);
       return;
     }
 
-    // Mark as cancelled
     run.cancelled = true;
     run.status = "cancelled";
     run.error = "Pipeline cancelled by user";
-
-    // If there's a pending question, resolve it to unblock the runner
-    if (run.pendingQuestion) {
-      const pending = run.pendingQuestion;
-      run.pendingQuestion = null;
-      pending.resolve({ value: AnswerValue.SKIPPED });
+    if (run.pendingQuestionId) {
+      run.questionStore.markCancelled(run.runId, run.pendingQuestionId);
     }
+    run.pendingQuestionId = null;
+    persistRunState(run);
 
     sendJson(res, 200, { runId, status: "cancelled" });
   }
 
-  /** POST /pipelines/{id}/questions/{qid}/answer - Submit a human-in-the-loop answer */
   async function handlePostAnswer(
     req: http.IncomingMessage,
     res: http.ServerResponse,
     runId: string,
-    _questionId: string,
+    questionId: string,
   ): Promise<void> {
     const run = runs.get(runId);
     if (!run) {
       sendError(res, 404, `Unknown runId: ${runId}`);
-      return;
-    }
-
-    if (!run.pendingQuestion) {
-      sendError(res, 409, "No pending question for this run");
       return;
     }
 
@@ -336,44 +473,73 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       return;
     }
 
-    // Resolve the pending question
+    hydrateFromRunState(run);
+    const pendingQuestion = resolvePendingQuestion(run);
+    if (!pendingQuestion) {
+      sendError(res, 409, "No pending question for this run");
+      return;
+    }
+    if (pendingQuestion.id !== questionId) {
+      sendError(
+        res,
+        409,
+        `Question ${questionId} is stale; pending question is ${pendingQuestion.id}`,
+      );
+      return;
+    }
+
     const answer: Answer = {
       value: parsed.value,
-      ...(parsed.text !== undefined && { text: parsed.text }),
+      ...(parsed.text !== undefined ? { text: parsed.text } : {}),
+      questionId,
     };
+    const submit = run.questionStore.submitAnswer(runId, questionId, answer);
+    if (!submit.ok) {
+      if (submit.reason === "not_found") {
+        sendError(res, 404, `Unknown questionId: ${questionId}`);
+        return;
+      }
+      if (submit.reason === "already_answered") {
+        sendError(res, 409, `Question ${questionId} was already answered`);
+        return;
+      }
+      if (submit.reason === "run_mismatch") {
+        sendError(res, 409, `Question ${questionId} does not belong to run ${runId}`);
+        return;
+      }
+      sendError(res, 409, `Question ${questionId} is not pending`);
+      return;
+    }
 
-    const pending = run.pendingQuestion;
-    run.pendingQuestion = null;
-    run.status = "running";
-    pending.resolve(answer);
+    if (!run.cancelled) {
+      run.status = "running";
+      run.pendingQuestionId = null;
+      run.error = null;
+      run.result = null;
+      persistRunState(run);
+      startRunner(run, run.logsRoot);
+    }
 
-    sendJson(res, 200, { accepted: true });
+    sendJson(res, 200, { accepted: true, questionId });
   }
 
-  /** GET /pipelines/{id}/events - SSE event stream */
-  function handleGetEvents(
-    res: http.ServerResponse,
-    runId: string,
-  ): void {
+  function handleGetEvents(res: http.ServerResponse, runId: string): void {
     const run = runs.get(runId);
     if (!run) {
       sendError(res, 404, `Unknown runId: ${runId}`);
       return;
     }
 
-    // Set up SSE headers
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
     });
 
-    // Send any existing events as a replay
     for (const event of run.events) {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     }
 
-    // Subscribe to new events
     const listener: EventListener = (event: PipelineEvent) => {
       if (!res.destroyed) {
         res.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -381,64 +547,93 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     };
     run.eventListeners.add(listener);
 
-    // Check if the run is already finished
-    if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
+    if (
+      run.status === "completed" ||
+      run.status === "failed" ||
+      run.status === "cancelled"
+    ) {
       res.write(`event: done\ndata: ${JSON.stringify({ status: run.status })}\n\n`);
       res.end();
       return;
     }
 
-    // Clean up on client disconnect
     res.on("close", () => {
       run.eventListeners.delete(listener);
     });
   }
 
-  /** GET /pipelines/{id}/checkpoint - Get current checkpoint state */
-  function handleGetCheckpoint(
-    res: http.ServerResponse,
-    runId: string,
-  ): void {
+  function handleGetCheckpoint(res: http.ServerResponse, runId: string): void {
     const run = runs.get(runId);
     if (!run) {
       sendError(res, 404, `Unknown runId: ${runId}`);
       return;
     }
 
-    const checkpoint = {
+    hydrateFromRunState(run);
+    const pendingQuestion = resolvePendingQuestion(run);
+    if (Checkpoint.exists(run.logsRoot)) {
+      let cp: Checkpoint;
+      try {
+        cp = Checkpoint.load(run.logsRoot);
+      } catch (err) {
+        sendError(res, 500, `Failed to load checkpoint: ${String(err)}`);
+        return;
+      }
+      sendJson(res, 200, {
+        runId: run.runId,
+        status: run.status,
+        timestamp: cp.timestamp,
+        currentNode: cp.currentNode,
+        completedNodes: cp.completedNodes,
+        nodeRetries: cp.nodeRetries,
+        context: cp.contextValues,
+        logs: cp.logs,
+        nodeOutcomes: cp.nodeOutcomes,
+        waitingForQuestionId: pendingQuestion?.id ?? cp.waitingForQuestionId ?? null,
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
       runId: run.runId,
       status: run.status,
       currentNode: run.currentNode,
       completedNodes: run.completedNodes,
-    };
-
-    sendJson(res, 200, checkpoint);
+      waitingForQuestionId: pendingQuestion?.id ?? null,
+    });
   }
 
-  /** GET /pipelines/{id}/context - Get current context key-value store */
-  function handleGetContext(
-    res: http.ServerResponse,
-    runId: string,
-  ): void {
+  function handleGetContext(res: http.ServerResponse, runId: string): void {
     const run = runs.get(runId);
     if (!run) {
       sendError(res, 404, `Unknown runId: ${runId}`);
       return;
     }
 
-    // If the result is available, use its context snapshot; otherwise use tracked context
-    const context = run.result
-      ? run.result.context.snapshot()
-      : run.context;
+    if (run.result) {
+      sendJson(res, 200, {
+        runId: run.runId,
+        context: run.result.context.snapshot(),
+      });
+      return;
+    }
 
-    sendJson(res, 200, { runId: run.runId, context });
+    if (Checkpoint.exists(run.logsRoot)) {
+      let cp: Checkpoint;
+      try {
+        cp = Checkpoint.load(run.logsRoot);
+      } catch (err) {
+        sendError(res, 500, `Failed to load checkpoint context: ${String(err)}`);
+        return;
+      }
+      sendJson(res, 200, { runId: run.runId, context: cp.contextValues });
+      return;
+    }
+
+    sendJson(res, 200, { runId: run.runId, context: run.context });
   }
 
-  /** GET /pipelines/{id}/graph - Get graph visualization (SVG or DOT source) */
-  function handleGetGraph(
-    res: http.ServerResponse,
-    runId: string,
-  ): void {
+  function handleGetGraph(res: http.ServerResponse, runId: string): void {
     const run = runs.get(runId);
     if (!run) {
       sendError(res, 404, `Unknown runId: ${runId}`);
@@ -446,8 +641,11 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     }
 
     const dotSource = run.dotSource;
+    if (!dotSource) {
+      sendError(res, 404, `DOT source is unavailable for run ${runId}`);
+      return;
+    }
 
-    // Try to render SVG via the `dot` command (from Graphviz)
     try {
       const proc = spawn("dot", ["-Tsvg"], {
         stdio: ["pipe", "pipe", "pipe"],
@@ -455,11 +653,9 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       });
 
       const chunks: Buffer[] = [];
-
       proc.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
 
       proc.on("error", () => {
-        // `dot` command not found — return raw DOT source
         if (!res.headersSent) {
           const body = dotSource;
           res.writeHead(200, {
@@ -471,10 +667,10 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       });
 
       proc.on("close", (code) => {
-        if (res.headersSent) return;
-
+        if (res.headersSent) {
+          return;
+        }
         if (code !== 0) {
-          // dot failed — return raw DOT source
           const body = dotSource;
           res.writeHead(200, {
             "Content-Type": "text/vnd.graphviz",
@@ -483,7 +679,6 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
           res.end(body);
           return;
         }
-
         const svg = Buffer.concat(chunks).toString("utf-8");
         res.writeHead(200, {
           "Content-Type": "image/svg+xml",
@@ -495,7 +690,6 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       proc.stdin.write(dotSource);
       proc.stdin.end();
     } catch {
-      // Fallback: return raw DOT source
       if (!res.headersSent) {
         const body = dotSource;
         res.writeHead(200, {
@@ -507,7 +701,6 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     }
   }
 
-  /** Main request router */
   async function handleRequest(
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -516,59 +709,69 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     const segments = parsePath(req.url ?? "/");
 
     try {
-      // All routes start with /pipelines
       if (segments[0] !== "pipelines") {
         sendError(res, 404, "Not found");
         return;
       }
 
-      // POST /pipelines - Start a pipeline
       if (method === "POST" && segments.length === 1) {
         await handlePostPipelines(req, res);
         return;
       }
 
-      // Routes that require a pipeline ID: /pipelines/{id}/...
       if (segments.length >= 2) {
         const runId = segments[1]!;
 
-        // GET /pipelines/{id} - Get status
         if (method === "GET" && segments.length === 2) {
           handleGetStatus(res, runId);
           return;
         }
 
-        // POST /pipelines/{id}/cancel - Cancel pipeline
-        if (method === "POST" && segments.length === 3 && segments[2] === "cancel") {
+        if (
+          method === "POST" &&
+          segments.length === 3 &&
+          segments[2] === "cancel"
+        ) {
           handlePostCancel(res, runId);
           return;
         }
 
-        // GET /pipelines/{id}/events - SSE event stream
-        if (method === "GET" && segments.length === 3 && segments[2] === "events") {
+        if (
+          method === "GET" &&
+          segments.length === 3 &&
+          segments[2] === "events"
+        ) {
           handleGetEvents(res, runId);
           return;
         }
 
-        // GET /pipelines/{id}/graph - Graph visualization
-        if (method === "GET" && segments.length === 3 && segments[2] === "graph") {
+        if (
+          method === "GET" &&
+          segments.length === 3 &&
+          segments[2] === "graph"
+        ) {
           handleGetGraph(res, runId);
           return;
         }
 
-        // GET /pipelines/{id}/checkpoint - Checkpoint state
-        if (method === "GET" && segments.length === 3 && segments[2] === "checkpoint") {
+        if (
+          method === "GET" &&
+          segments.length === 3 &&
+          segments[2] === "checkpoint"
+        ) {
           handleGetCheckpoint(res, runId);
           return;
         }
 
-        // GET /pipelines/{id}/context - Context key-value store
-        if (method === "GET" && segments.length === 3 && segments[2] === "context") {
+        if (
+          method === "GET" &&
+          segments.length === 3 &&
+          segments[2] === "context"
+        ) {
           handleGetContext(res, runId);
           return;
         }
 
-        // POST /pipelines/{id}/questions/{qid}/answer - Submit answer
         if (
           method === "POST" &&
           segments.length === 5 &&
@@ -580,7 +783,6 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
         }
       }
 
-      // Unknown route
       sendError(res, 404, "Not found");
     } catch (err) {
       sendError(res, 500, `Internal server error: ${err}`);
@@ -597,13 +799,11 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     },
   );
 
-  // Attach the runs map to the server for testing access
   (server as HttpPipelineServer).runs = runs;
 
   return server;
 }
 
-/** Extended server type with runs map accessible for testing */
 export interface HttpPipelineServer extends http.Server {
   runs: Map<string, RunState>;
 }
