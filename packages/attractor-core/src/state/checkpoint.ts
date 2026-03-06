@@ -1,10 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { Outcome } from "./types.js";
 
 export interface CheckpointData {
   timestamp: string;
   currentNode: string;
   completedNodes: string[];
+  nodeOutcomes: Record<string, Outcome>;
   nodeRetries: Record<string, number>;
   context: Record<string, unknown>;
   logs: string[];
@@ -14,6 +16,7 @@ export class Checkpoint {
   timestamp: string;
   currentNode: string;
   completedNodes: string[];
+  nodeOutcomes: Record<string, Outcome>;
   nodeRetries: Record<string, number>;
   contextValues: Record<string, unknown>;
   logs: string[];
@@ -22,6 +25,7 @@ export class Checkpoint {
     this.timestamp = opts?.timestamp ?? new Date().toISOString();
     this.currentNode = opts?.currentNode ?? "";
     this.completedNodes = opts?.completedNodes ?? [];
+    this.nodeOutcomes = opts?.nodeOutcomes ?? {};
     this.nodeRetries = opts?.nodeRetries ?? {};
     this.contextValues = opts?.context ?? {};
     this.logs = opts?.logs ?? [];
@@ -34,6 +38,7 @@ export class Checkpoint {
       timestamp: new Date().toISOString(),
       currentNode: this.currentNode,
       completedNodes: this.completedNodes,
+      nodeOutcomes: this.nodeOutcomes,
       nodeRetries: this.nodeRetries,
       context: this.contextValues,
       logs: this.logs,

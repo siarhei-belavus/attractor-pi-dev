@@ -196,10 +196,13 @@ export class PipelineRunner {
         // Restore context values from the checkpoint
         context.applyUpdates(cp.contextValues);
 
-        // Restore completed nodes and mark them with SUCCESS outcomes
+        // Restore completed node ordering
         for (const nodeId of cp.completedNodes) {
           completedNodes.push(nodeId);
-          nodeOutcomes.set(nodeId, { status: StageStatus.SUCCESS });
+        }
+        // Restore real node outcomes from checkpoint
+        for (const [nodeId, outcome] of Object.entries(cp.nodeOutcomes)) {
+          nodeOutcomes.set(nodeId, outcome);
         }
 
         // Restore retry counters into context
@@ -220,14 +223,22 @@ export class PipelineRunner {
             return { outcome: lastOutcome, completedNodes, context };
           }
 
+          const lastCompletedOutcome = nodeOutcomes.get(lastCompletedId);
+          if (!lastCompletedOutcome) {
+            throw new Error(
+              `Checkpoint is missing node outcome for completed node '${lastCompletedId}'`,
+            );
+          }
+
           // Select the next edge from the last completed node using the checkpoint context
           const outgoing = graph.outgoingEdges(lastCompletedId);
-          const nextEdge = selectEdge(outgoing, lastOutcome, context);
+          const nextEdge = selectEdge(outgoing, lastCompletedOutcome, context);
 
           if (nextEdge) {
             currentNode = graph.getNode(nextEdge.toNode);
             incomingEdge = nextEdge;
             previousNodeId = lastCompletedId;
+            lastOutcome = lastCompletedOutcome;
 
             // Resume degradation (spec §5.3 point 6): if the last completed node
             // used full fidelity, degrade the first resumed node to summary:high
@@ -289,6 +300,7 @@ export class PipelineRunner {
         new Checkpoint({
           currentNode: node.id,
           completedNodes: [...completedNodes],
+          nodeOutcomes: Object.fromEntries(nodeOutcomes),
           nodeRetries: termRetries,
           context: termSnap,
         }).save(logsRoot);
@@ -386,6 +398,7 @@ export class PipelineRunner {
       const checkpoint = new Checkpoint({
         currentNode: node.id,
         completedNodes: [...completedNodes],
+        nodeOutcomes: Object.fromEntries(nodeOutcomes),
         nodeRetries,
         context: snap,
       });

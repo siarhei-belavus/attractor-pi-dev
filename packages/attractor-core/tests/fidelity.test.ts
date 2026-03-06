@@ -520,6 +520,10 @@ describe("Integration: resume fidelity degradation (spec §5.3 point 6)", () => 
     const cp = new Checkpoint({
       currentNode: "a",
       completedNodes: ["start", "a"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        a: { status: StageStatus.SUCCESS },
+      },
       context: { "graph.goal": "Test degrade", outcome: "success", last_stage: "a" },
       nodeRetries: {},
     });
@@ -569,6 +573,10 @@ describe("Integration: resume fidelity degradation (spec §5.3 point 6)", () => 
     const cp = new Checkpoint({
       currentNode: "a",
       completedNodes: ["start", "a"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        a: { status: StageStatus.SUCCESS },
+      },
       context: { "graph.goal": "Test no degrade", outcome: "success", last_stage: "a" },
       nodeRetries: {},
     });
@@ -617,6 +625,10 @@ describe("Integration: resume fidelity degradation (spec §5.3 point 6)", () => 
     const cp = new Checkpoint({
       currentNode: "a",
       completedNodes: ["start", "a"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        a: { status: StageStatus.SUCCESS },
+      },
       context: { "graph.goal": "Test one-hop degrade", outcome: "success", last_stage: "a" },
       nodeRetries: {},
     });

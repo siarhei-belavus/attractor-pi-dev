@@ -590,6 +590,10 @@ describe("Integration: Checkpoint Resume", () => {
     const cp = new Checkpoint({
       currentNode: "a",
       completedNodes: ["start", "a"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        a: { status: StageStatus.SUCCESS },
+      },
       context: { "graph.goal": "Test resume", last_stage: "a", outcome: "success" },
       nodeRetries: {},
     });
@@ -660,6 +664,10 @@ describe("Integration: Checkpoint Resume", () => {
     const cp = new Checkpoint({
       currentNode: "a",
       completedNodes: ["start", "a"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        a: { status: StageStatus.SUCCESS },
+      },
       context: {
         "graph.goal": "Test context resume",
         outcome: "success",
@@ -731,6 +739,10 @@ describe("Integration: Checkpoint Resume", () => {
     const cp = new Checkpoint({
       currentNode: "a",
       completedNodes: ["start", "a"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        a: { status: StageStatus.SUCCESS },
+      },
       context: {
         "graph.goal": "Test retry resume",
         outcome: "success",
@@ -817,6 +829,10 @@ describe("Integration: Checkpoint Resume", () => {
     const cp = new Checkpoint({
       currentNode: "a",
       completedNodes: ["start", "a"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        a: { status: StageStatus.SUCCESS },
+      },
       context: { "graph.goal": "Test checkpoint saves on resume", outcome: "success", last_stage: "a" },
       nodeRetries: {},
     });
@@ -850,6 +866,167 @@ describe("Integration: Checkpoint Resume", () => {
     expect(finalCheckpoint.completedNodes).toContain("a");
     expect(finalCheckpoint.completedNodes).toContain("b");
     expect(finalCheckpoint.completedNodes).toContain("c");
+    expect(finalCheckpoint.nodeOutcomes?.a?.status).toBe(StageStatus.SUCCESS);
+    expect(finalCheckpoint.nodeOutcomes?.b?.status).toBe(StageStatus.SUCCESS);
+    expect(finalCheckpoint.nodeOutcomes?.c?.status).toBe(StageStatus.SUCCESS);
+
+    fs.rmSync(checkpointDir, { recursive: true, force: true });
+  });
+
+  it("preserves failed and partial goal_gate semantics after resume", async () => {
+    const DOT = `
+      digraph GoalGateResume {
+        graph [goal="Test gate semantics on resume"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        gate [type="manual_gate", goal_gate=true, prompt="Gate node"]
+        start -> gate -> exit
+      }
+    `;
+    const { graph } = preparePipeline(DOT);
+
+    const failCpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gate-fail-resume-"));
+    new Checkpoint({
+      currentNode: "gate",
+      completedNodes: ["start", "gate"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        gate: { status: StageStatus.FAIL, failureReason: "failed before checkpoint" },
+      },
+      context: { "graph.goal": "Test gate semantics on resume", outcome: "fail", last_stage: "gate" },
+      nodeRetries: {},
+    }).save(failCpDir);
+
+    const failRunner = new PipelineRunner({
+      logsRoot: tmpDir,
+      resumeFrom: failCpDir,
+    });
+    const failResult = await failRunner.run(graph);
+    expect(failResult.outcome.status).toBe(StageStatus.FAIL);
+
+    const partialCpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gate-partial-resume-"));
+    new Checkpoint({
+      currentNode: "gate",
+      completedNodes: ["start", "gate"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        gate: { status: StageStatus.PARTIAL_SUCCESS, notes: "good enough" },
+      },
+      context: { "graph.goal": "Test gate semantics on resume", outcome: "partial_success", last_stage: "gate" },
+      nodeRetries: {},
+    }).save(partialCpDir);
+
+    const partialRunner = new PipelineRunner({
+      logsRoot: tmpDir,
+      resumeFrom: partialCpDir,
+    });
+    const partialResult = await partialRunner.run(graph);
+    expect(partialResult.outcome.status).toBe(StageStatus.PARTIAL_SUCCESS);
+
+    fs.rmSync(failCpDir, { recursive: true, force: true });
+    fs.rmSync(partialCpDir, { recursive: true, force: true });
+  });
+
+  it("preserves preferredLabel-based routing after resume", async () => {
+    const DOT = `
+      digraph PreferredLabelResume {
+        graph [goal="Test preferred label resume"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        chooser [type="branch_track", prompt="Choose branch"]
+        left [type="branch_track", prompt="Left branch"]
+        right [type="branch_track", prompt="Right branch"]
+        start -> chooser
+        chooser -> left [label="Go left"]
+        chooser -> right [label="Go right"]
+        left -> exit
+        right -> exit
+      }
+    `;
+    const { graph } = preparePipeline(DOT);
+
+    const checkpointDir = fs.mkdtempSync(path.join(os.tmpdir(), "preferred-resume-"));
+    new Checkpoint({
+      currentNode: "chooser",
+      completedNodes: ["start", "chooser"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        chooser: { status: StageStatus.SUCCESS, preferredLabel: "Go right" },
+      },
+      context: { "graph.goal": "Test preferred label resume", outcome: "success", last_stage: "chooser" },
+      nodeRetries: {},
+    }).save(checkpointDir);
+
+    const executedNodes: string[] = [];
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      resumeFrom: checkpointDir,
+    });
+    runner.registerHandler("branch_track", {
+      async execute(node, _ctx, _graph, _logsRoot) {
+        executedNodes.push(node.id);
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: { last_stage: node.id },
+        };
+      },
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(executedNodes).toEqual(["right"]);
+
+    fs.rmSync(checkpointDir, { recursive: true, force: true });
+  });
+
+  it("preserves suggestedNextIds-based routing after resume", async () => {
+    const DOT = `
+      digraph SuggestedIdsResume {
+        graph [goal="Test suggested ids resume"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        chooser [type="branch_track", prompt="Choose branch"]
+        left [type="branch_track", prompt="Left branch"]
+        right [type="branch_track", prompt="Right branch"]
+        start -> chooser
+        chooser -> left
+        chooser -> right
+        left -> exit
+        right -> exit
+      }
+    `;
+    const { graph } = preparePipeline(DOT);
+
+    const checkpointDir = fs.mkdtempSync(path.join(os.tmpdir(), "suggested-resume-"));
+    new Checkpoint({
+      currentNode: "chooser",
+      completedNodes: ["start", "chooser"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        chooser: { status: StageStatus.SUCCESS, suggestedNextIds: ["right"] },
+      },
+      context: { "graph.goal": "Test suggested ids resume", outcome: "success", last_stage: "chooser" },
+      nodeRetries: {},
+    }).save(checkpointDir);
+
+    const executedNodes: string[] = [];
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      resumeFrom: checkpointDir,
+    });
+    runner.registerHandler("branch_track", {
+      async execute(node, _ctx, _graph, _logsRoot) {
+        executedNodes.push(node.id);
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: { last_stage: node.id },
+        };
+      },
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(executedNodes).toEqual(["right"]);
 
     fs.rmSync(checkpointDir, { recursive: true, force: true });
   });

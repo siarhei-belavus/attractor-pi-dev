@@ -81,6 +81,10 @@ describe("Checkpoint", () => {
     const cp = new Checkpoint({
       currentNode: "plan",
       completedNodes: ["start", "plan"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        plan: { status: StageStatus.PARTIAL_SUCCESS, notes: "checkpointed" },
+      },
       context: { key: "value" },
       nodeRetries: { plan: 1 },
     });
@@ -91,6 +95,10 @@ describe("Checkpoint", () => {
     const loaded = Checkpoint.load(tmpDir);
     expect(loaded.currentNode).toBe("plan");
     expect(loaded.completedNodes).toEqual(["start", "plan"]);
+    expect(loaded.nodeOutcomes).toEqual({
+      start: { status: StageStatus.SUCCESS },
+      plan: { status: StageStatus.PARTIAL_SUCCESS, notes: "checkpointed" },
+    });
     expect(loaded.contextValues).toEqual({ key: "value" });
     expect(loaded.nodeRetries).toEqual({ plan: 1 });
   });
