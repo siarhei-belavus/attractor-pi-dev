@@ -1,6 +1,6 @@
 // Backend (Attractor integration)
 export { PiAgentCodergenBackend } from "./backend.js";
-export type { PiAgentBackendOptions } from "./backend.js";
+export type { PiAgentBackendOptions, SessionSnapshot } from "./backend.js";
 
 // Session
 export { Session, SessionState } from "./session.js";
@@ -52,6 +52,18 @@ export { detectLoop } from "./loop-detection.js";
 export { filterEnv } from "./env-filter.js";
 export type { EnvFilterPolicy } from "./env-filter.js";
 export { truncateOutput, truncateLines, truncateToolOutput } from "./truncation.js";
+export {
+  defaultPiResourcePolicy,
+  parsePiResourcePolicyFromEnv,
+  resolvePiResourcePolicy,
+} from "./extension-resource-policy.js";
+export type {
+  ResourceDiscoveryMode,
+  PiResourcePolicy,
+  PiResourcePolicyInput,
+} from "./extension-resource-policy.js";
+export { applyProviderToolActivationPolicy } from "./tool-activation-policy.js";
+export type { ToolPolicyResult } from "./tool-activation-policy.js";
 export {
   buildFullSystemPrompt,
   discoverProjectDocs,

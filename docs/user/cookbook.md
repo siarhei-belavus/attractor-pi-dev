@@ -419,6 +419,35 @@ attractor run workflow.dot --simulate --auto-approve
 # With real LLM but auto-approved gates
 attractor run workflow.dot --auto-approve --logs-dir ./ci-logs/$BUILD_ID
 
+## 15. Explicit Extension Allowlist (Discovery Off)
+
+Load only specific pi extensions, without auto-discovery:
+
+```bash
+export ATTRACTOR_PI_RESOURCE_DISCOVERY=none
+export ATTRACTOR_PI_RESOURCE_ALLOWLIST="/abs/path/extensions/audit.ts,/abs/path/extensions/guards.ts"
+
+attractor run workflow.dot
+```
+
+This keeps extension loading deterministic and scoped to the explicit allowlist.
+
+## 16. Debugging Prompt and Tool Activation
+
+Capture redacted agent internals for troubleshooting extension behavior:
+
+```bash
+attractor run workflow.dot --debug-agent
+```
+
+Artifacts are written to the run log directory:
+
+- `system-prompt.md` - effective prompt used by the session.
+- `active-tools.json` - active tool set plus provider policy diagnostics.
+- `agent-thread.jsonl` - redacted runtime/session event stream.
+
+If an extension unexpectedly modifies instructions, compare `system-prompt.md` with your expected prompt baseline.
+
 # Validate in CI before merge
 attractor validate workflow.dot || exit 1
 ```

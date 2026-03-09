@@ -1,0 +1,134 @@
+{
+  "baseDir": "/Users/Siarhei_Belavus/Projects/explore/attractor-pi-dev/tmp/durable-live-check-1772824860982",
+  "scenarios": {
+    "wrongQid": {
+      "runId": "run-1",
+      "qid": "q-0001",
+      "wrongQid": "q-9999",
+      "wrongAnswer": {
+        "status": 409,
+        "data": {
+          "error": "Question q-9999 is stale; pending question is q-0001"
+        }
+      },
+      "statusAfter": {
+        "runId": "run-1",
+        "status": "waiting_for_answer",
+        "currentNode": "review",
+        "completedNodes": [
+          "start"
+        ],
+        "context": {
+          "graph.goal": "Review pipeline",
+          "current_node": "review",
+          "internal.incoming_edge_fidelity": "",
+          "internal.incoming_edge_thread_id": "",
+          "internal.effective_fidelity": "compact",
+          "outcome": "waiting",
+          "internal.waiting_for_question_id": "q-0001",
+          "human.gate.question_id": "q-0001"
+        },
+        "pendingQuestion": {
+          "id": "q-0001",
+          "status": "pending",
+          "text": "Review Changes",
+          "type": "multiple_choice",
+          "options": [
+            {
+              "key": "A",
+              "label": "[A] Approve"
+            }
+          ],
+          "stage": "review",
+          "createdAt": "2026-03-06T19:21:01.001Z"
+        },
+        "outcome": {
+          "status": "waiting",
+          "notes": "waiting for human answer",
+          "contextUpdates": {
+            "internal.waiting_for_question_id": "q-0001",
+            "human.gate.question_id": "q-0001"
+          }
+        }
+      },
+      "questionStatus": "pending",
+      "runDir": "/Users/Siarhei_Belavus/Projects/explore/attractor-pi-dev/tmp/durable-live-check-1772824860982/wrong-qid/run-1"
+    },
+    "doubleAnswer": {
+      "runId": "run-1",
+      "qid": "q-0001",
+      "first": {
+        "status": 200,
+        "data": {
+          "accepted": true,
+          "questionId": "q-0001"
+        }
+      },
+      "second": {
+        "status": 409,
+        "data": {
+          "error": "No pending question for this run"
+        }
+      },
+      "finalStatus": "completed",
+      "completedNodes": [
+        "start",
+        "review",
+        "ship_it",
+        "exit"
+      ],
+      "questionStatus": "answered",
+      "runDir": "/Users/Siarhei_Belavus/Projects/explore/attractor-pi-dev/tmp/durable-live-check-1772824860982/double-answer/run-1"
+    },
+    "cancelDuringPending": {
+      "runId": "run-1",
+      "qid": "q-0001",
+      "cancel": {
+        "status": 200,
+        "data": {
+          "runId": "run-1",
+          "status": "cancelled"
+        }
+      },
+      "statusAfterCancel": {
+        "runId": "run-1",
+        "status": "cancelled",
+        "currentNode": "review",
+        "completedNodes": [
+          "start"
+        ],
+        "context": {
+          "graph.goal": "Review pipeline",
+          "current_node": "review",
+          "internal.incoming_edge_fidelity": "",
+          "internal.incoming_edge_thread_id": "",
+          "internal.effective_fidelity": "compact",
+          "outcome": "waiting",
+          "internal.waiting_for_question_id": "q-0001",
+          "human.gate.question_id": "q-0001"
+        },
+        "outcome": {
+          "status": "waiting",
+          "notes": "waiting for human answer",
+          "contextUpdates": {
+            "internal.waiting_for_question_id": "q-0001",
+            "human.gate.question_id": "q-0001"
+          }
+        },
+        "error": "Pipeline cancelled by user"
+      },
+      "answerAfterCancel": {
+        "status": 409,
+        "data": {
+          "error": "No pending question for this run"
+        }
+      },
+      "runState": {
+        "status": "cancelled",
+        "pendingQuestionId": null
+      },
+      "questionStatus": "cancelled",
+      "runDir": "/Users/Siarhei_Belavus/Projects/explore/attractor-pi-dev/tmp/durable-live-check-1772824860982/cancel-during-pending/run-1"
+    }
+  }
+}

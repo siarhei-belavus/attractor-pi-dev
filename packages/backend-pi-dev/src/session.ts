@@ -10,16 +10,20 @@ import { type Model, type Api } from "@mariozechner/pi-ai";
 import {
   createAgentSession,
   AuthStorage,
+  DefaultResourceLoader,
   ModelRegistry,
   SessionManager,
   type AgentSession,
   type AgentSessionEvent,
+  type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 import type { ProviderProfile } from "./provider-profile.js";
 import type { ExecutionEnvironment } from "./execution-env.js";
 import { buildFullSystemPrompt, discoverProjectDocs } from "./system-prompt.js";
 import { detectLoop } from "./loop-detection.js";
 import { truncateToolOutput } from "./truncation.js";
+import type { PiResourcePolicy } from "./extension-resource-policy.js";
+import { applyProviderToolActivationPolicy } from "./tool-activation-policy.js";
 
 // ─── Session State Machine ───────────────────────────────────────────────────
 
@@ -101,6 +105,7 @@ export interface SessionOptions {
   profile: ProviderProfile;
   executionEnv?: ExecutionEnvironment;
   config?: Partial<SessionConfig>;
+  resourcePolicy?: PiResourcePolicy;
   /** Custom system prompt override */
   systemPrompt?: string;
   /** User instructions appended to system prompt */
@@ -111,6 +116,8 @@ export interface SessionOptions {
   modelRegistry?: ModelRegistry;
   /** Depth of this session (for subagent depth limiting) */
   depth?: number;
+  /** Warning handler */
+  onWarning?: (message: string) => void;
 }
 
 /**
@@ -138,6 +145,11 @@ export class Session {
   private executionEnv?: ExecutionEnvironment;
   private userInstructions?: string;
   private customSystemPrompt?: string;
+  private resourcePolicy?: PiResourcePolicy;
+  private onWarning?: (message: string) => void;
+  private toolPolicyDiagnostics: string[] = [];
+  private preparedSystemPrompt?: string;
+  private projectedActiveToolNames: string[] = [];
   /** Stores raw (untruncated) tool outputs keyed by toolCallId */
   private rawToolOutputs = new Map<string, string>();
   /** Set when turn/round limits are hit, checked by tool wrappers */
@@ -151,6 +163,8 @@ export class Session {
     this.executionEnv = opts.executionEnv;
     this.userInstructions = opts.userInstructions;
     this.customSystemPrompt = opts.systemPrompt;
+    this.resourcePolicy = opts.resourcePolicy;
+    this.onWarning = opts.onWarning;
     this.authStorage = opts.authStorage ?? new AuthStorage();
     this.modelRegistry = opts.modelRegistry ?? new ModelRegistry(this.authStorage);
   }
@@ -223,6 +237,16 @@ export class Session {
       selectedTools: this.profile.toolNames,
       contextFiles,
     });
+    this.preparedSystemPrompt = systemPrompt;
+    this.projectProjectedToolState(this.profile.toolNames);
+
+    const resourceLoader = new DefaultResourceLoader({
+      cwd,
+      additionalExtensionPaths: this.resourcePolicy?.allowlist ?? [],
+      noExtensions: this.resourcePolicy?.discovery === "none",
+      systemPrompt,
+    });
+    await resourceLoader.reload();
 
     const result = await createAgentSession({
       model: this.profile.model,
@@ -231,23 +255,23 @@ export class Session {
       authStorage: this.authStorage,
       modelRegistry: this.modelRegistry,
       sessionManager: SessionManager.inMemory(),
+      resourceLoader,
+      customTools: this.getCustomToolDefinitions(),
     });
 
     this.agentSession = result.session;
-
-    // Wrap tools with truncation before setting them on the agent
-    const wrappedTools = this.wrapToolsWithTruncation(this.profile.tools);
-
-    // Set the system prompt and tools from the profile
-    this.agentSession.agent.setSystemPrompt(systemPrompt);
-    this.agentSession.agent.setTools(wrappedTools);
+    await this.agentSession.bindExtensions({});
+    this.applyToolActivationPolicy();
 
     // Subscribe to agent events and re-emit as session events
     this.agentSession.subscribe((agentEvent: AgentSessionEvent) => {
       this.handleAgentEvent(agentEvent);
     });
 
-    this.emit("session_start");
+    this.emit("session_start", {
+      activeTools: this.getActiveToolNames(),
+      systemPrompt: this.getSystemPrompt() ?? "",
+    });
   }
 
   /**
@@ -309,6 +333,52 @@ export class Session {
         return result;
       },
     })) as AgentTool[];
+  }
+
+  private getCustomToolDefinitions(): ToolDefinition[] {
+    const builtInToolNames = new Set(["read", "write", "edit", "bash", "grep", "find", "ls"]);
+    const customTools = this.profile.tools.filter((tool) => !builtInToolNames.has(tool.name));
+    const wrapped = this.wrapToolsWithTruncation(customTools);
+    const seen = new Set<string>();
+    const out: ToolDefinition[] = [];
+
+    for (const tool of wrapped) {
+      if (seen.has(tool.name)) {
+        this.onWarning?.(`Duplicate custom tool "${tool.name}" detected; keeping first instance.`);
+        continue;
+      }
+      seen.add(tool.name);
+      out.push(tool as unknown as ToolDefinition);
+    }
+
+    return out;
+  }
+
+  private applyToolActivationPolicy(): void {
+    if (!this.agentSession) return;
+
+    const available = this.agentSession.getAllTools().map((tool) => tool.name);
+    const { activeToolNames, diagnostics } = applyProviderToolActivationPolicy(
+      this.profile.id,
+      available,
+    );
+
+    this.toolPolicyDiagnostics = diagnostics;
+    for (const message of diagnostics) {
+      this.onWarning?.(message);
+    }
+
+    this.agentSession.setActiveToolsByName(activeToolNames);
+    this.projectedActiveToolNames = [...activeToolNames];
+  }
+
+  private projectProjectedToolState(toolNames: string[]): void {
+    const { activeToolNames, diagnostics } = applyProviderToolActivationPolicy(
+      this.profile.id,
+      toolNames,
+    );
+    this.projectedActiveToolNames = [...activeToolNames];
+    this.toolPolicyDiagnostics = [...diagnostics];
   }
 
   /**
@@ -404,6 +474,21 @@ export class Session {
   /** Get conversation history. */
   getMessages(): AgentMessage[] {
     return this.agentSession?.messages ?? [];
+  }
+
+  /** Get current effective system prompt. */
+  getSystemPrompt(): string | undefined {
+    return this.agentSession?.systemPrompt ?? this.preparedSystemPrompt;
+  }
+
+  /** Get currently active tool names. */
+  getActiveToolNames(): string[] {
+    return this.agentSession?.getActiveToolNames() ?? [...this.projectedActiveToolNames];
+  }
+
+  /** Get deterministic tool-policy diagnostics captured at initialization. */
+  getToolPolicyDiagnostics(): string[] {
+    return [...this.toolPolicyDiagnostics];
   }
 
   // ─── Internal Event Handling ─────────────────────────────────────────────

@@ -1,0 +1,27 @@
+{
+  "id": "q-0001",
+  "runId": "run-1",
+  "nodeId": "review",
+  "stage": "review",
+  "status": "pending",
+  "question": {
+    "text": "Review Changes",
+    "type": "multiple_choice",
+    "options": [
+      {
+        "key": "A",
+        "label": "[A] Approve"
+      }
+    ],
+    "stage": "review",
+    "metadata": {
+      "resumeQuestionId": ""
+    }
+  },
+  "answer": null,
+  "createdAt": "2026-03-06T19:21:01.001Z",
+  "answeredAt": null,
+  "metadata": {
+    "resumeQuestionId": ""
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "runId": "run-1",
+  "status": "waiting_for_answer",
+  "currentNode": "review",
+  "completedNodes": [
+    "start"
+  ],
+  "pendingQuestionId": "q-0001",
+  "updatedAt": "2026-03-06T19:21:01.002Z"
+}

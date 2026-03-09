@@ -28,6 +28,22 @@ import {
   LocalExecutionEnvironment,
   type ExecutionEnvironment,
 } from "./execution-env.js";
+import {
+  type PiResourcePolicy,
+  type PiResourcePolicyInput,
+  parsePiResourcePolicyFromEnv,
+  resolvePiResourcePolicy,
+} from "./extension-resource-policy.js";
+
+export interface SessionSnapshot {
+  phase: "before_submit" | "after_submit";
+  threadKey: string;
+  provider: string;
+  modelId: string;
+  activeTools: string[];
+  systemPrompt: string;
+  toolPolicyDiagnostics: string[];
+}
 
 export interface PiAgentBackendOptions {
   /** Default model provider (e.g. "anthropic", "openai", "google") */
@@ -50,6 +66,12 @@ export interface PiAgentBackendOptions {
   executionEnv?: ExecutionEnvironment;
   /** Custom provider profile factory override */
   createProfile?: (provider: string, cwd: string) => ProviderProfile;
+  /** Explicit runtime resource policy (takes precedence over env vars) */
+  resourcePolicy?: PiResourcePolicyInput;
+  /** Warning listener */
+  onWarning?: (message: string) => void;
+  /** Session snapshot listener (for debug artifacts) */
+  onSessionSnapshot?: (snapshot: SessionSnapshot) => void;
 }
 
 /**
@@ -70,6 +92,7 @@ export class PiAgentCodergenBackend implements CodergenBackend {
   private authStorage: AuthStorage;
   private modelRegistry: ModelRegistry;
   private executionEnv?: ExecutionEnvironment;
+  private resourcePolicy: PiResourcePolicy;
 
   constructor(opts?: PiAgentBackendOptions) {
     this.options = {
@@ -83,6 +106,12 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     this.authStorage = new AuthStorage();
     this.modelRegistry = new ModelRegistry(this.authStorage);
     this.executionEnv = opts?.executionEnv;
+    const envPolicy = parsePiResourcePolicyFromEnv(process.env, this.warn.bind(this));
+    this.resourcePolicy = resolvePiResourcePolicy(
+      opts?.resourcePolicy,
+      envPolicy,
+      this.warn.bind(this),
+    );
   }
 
   async run(
@@ -113,8 +142,10 @@ export class PiAgentCodergenBackend implements CodergenBackend {
         profile,
         executionEnv: execEnv,
         config: this.options.sessionConfig,
+        resourcePolicy: this.resourcePolicy,
         authStorage: this.authStorage,
         modelRegistry: this.modelRegistry,
+        onWarning: this.warn.bind(this),
       });
 
       // Wire up event listeners
@@ -127,6 +158,18 @@ export class PiAgentCodergenBackend implements CodergenBackend {
       }
     }
 
+    try {
+      await session.initialize();
+    } catch (err) {
+      this.emitSessionSnapshot("before_submit", session, threadKey, provider, modelId);
+      return {
+        status: StageStatus.FAIL,
+        failureReason: `Agent initialization failed: ${err}`,
+      };
+    }
+
+    this.emitSessionSnapshot("before_submit", session, threadKey, provider, modelId);
+
     // Send prompt and wait for completion
     try {
       await session.submit(prompt);
@@ -136,6 +179,8 @@ export class PiAgentCodergenBackend implements CodergenBackend {
         failureReason: `Agent execution failed: ${err}`,
       };
     }
+
+    this.emitSessionSnapshot("after_submit", session, threadKey, provider, modelId);
 
     // Extract the assistant's text response
     const responseText = session.getLastAssistantText() ?? "";
@@ -215,5 +260,31 @@ export class PiAgentCodergenBackend implements CodergenBackend {
       await session.dispose();
     }
     this.sessions.clear();
+  }
+
+  private warn(message: string): void {
+    if (this.options.onWarning) {
+      this.options.onWarning(message);
+      return;
+    }
+    console.warn(`[backend-pi-dev] ${message}`);
+  }
+
+  private emitSessionSnapshot(
+    phase: "before_submit" | "after_submit",
+    session: Session,
+    threadKey: string,
+    provider: string,
+    modelId: string,
+  ): void {
+    this.options.onSessionSnapshot?.({
+      phase,
+      threadKey,
+      provider,
+      modelId,
+      activeTools: session.getActiveToolNames(),
+      systemPrompt: session.getSystemPrompt() ?? "",
+      toolPolicyDiagnostics: session.getToolPolicyDiagnostics(),
+    });
   }
 }

@@ -25,6 +25,7 @@ attractor run <file.dot> [options]
 | `--logs-dir <path>`   | Output directory for logs and checkpoints. Default: `.attractor-runs/<timestamp>`. |
 | `--provider <name>`   | LLM provider. Default: `anthropic`. |
 | `--model <id>`        | LLM model ID. Default: `claude-sonnet-4-5-20250929`. |
+| `--debug-agent`       | Write redacted agent internals to run logs: `system-prompt.md`, `active-tools.json`, `agent-thread.jsonl`. |
 | `--set <key=value>`   | Set a pipeline variable. Repeatable. Overrides defaults from `graph[vars]`. |
 | `--verbose`           | Show detailed event output (checkpoint saves, stage completions, agent events). |
 
@@ -45,6 +46,9 @@ attractor run workflow.dot --provider openai --model gpt-5.2
 
 # Verbose output with custom log directory
 attractor run workflow.dot --verbose --logs-dir ./logs/run-001
+
+# Capture redacted agent diagnostics for extension/tool debugging
+attractor run workflow.dot --debug-agent
 
 # Auto-approve human gates (for CI/CD)
 attractor run workflow.dot --auto-approve
@@ -161,6 +165,13 @@ Each `attractor run` creates a log directory (default: `.attractor-runs/<timesta
 | Variable                  | Description |
 |---------------------------|-------------|
 | `ATTRACTOR_COMMANDS_PATH` | Comma-separated directories to search for `/command` prompt files (in addition to `.attractor/commands/`). |
+| `ATTRACTOR_PI_RESOURCE_DISCOVERY` | Pi extension discovery mode: `auto` (default) or `none`. |
+| `ATTRACTOR_PI_RESOURCE_ALLOWLIST` | Comma-separated absolute extension paths to load explicitly (for example `/abs/ext-a.ts,/abs/ext-b.ts`). |
+
+## Extension Prompt Behavior
+
+When using pi extensions, some extensions may modify the effective system prompt at turn start.  
+Treat extension selection as a trusted configuration decision and verify extension behavior before enabling it in production workflows.
 
 ## Exit Codes
 

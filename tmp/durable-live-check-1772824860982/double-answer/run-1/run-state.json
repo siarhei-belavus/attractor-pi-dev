@@ -1,0 +1,13 @@
+{
+  "runId": "run-1",
+  "status": "completed",
+  "currentNode": "exit",
+  "completedNodes": [
+    "start",
+    "review",
+    "ship_it",
+    "exit"
+  ],
+  "pendingQuestionId": null,
+  "updatedAt": "2026-03-06T19:21:01.023Z"
+}

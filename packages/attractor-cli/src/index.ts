@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   preparePipeline,
   PipelineRunner,
@@ -11,10 +12,24 @@ import {
   type PipelineEvent,
   type CodergenBackend,
 } from "@attractor/core";
-import { PiAgentCodergenBackend } from "@attractor/backend-pi-dev";
+import {
+  PiAgentCodergenBackend,
+  type PiAgentBackendOptions,
+  type SessionEvent,
+  type SessionSnapshot,
+} from "@attractor/backend-pi-dev";
+import { createDebugAgentWriter } from "./debug-agent.js";
 
-async function main() {
-  const args = process.argv.slice(2);
+export interface CliDeps {
+  createBackend: (options: PiAgentBackendOptions) => CodergenBackend;
+}
+
+const defaultDeps: CliDeps = {
+  createBackend: (options) => new PiAgentCodergenBackend(options),
+};
+
+export async function main(argv: string[] = process.argv.slice(2), deps: CliDeps = defaultDeps) {
+  const args = argv;
   const command = args[0];
 
   if (!command || command === "--help" || command === "-h") {
@@ -23,7 +38,7 @@ async function main() {
   }
 
   if (command === "run") {
-    await runCommand(args.slice(1));
+    await runCommand(args.slice(1), deps);
   } else if (command === "validate") {
     validateCommand(args.slice(1));
   } else if (command === "serve") {
@@ -55,6 +70,7 @@ Options (run):
   --logs-dir <path>  Output directory for logs (default: .attractor-runs/<timestamp>)
   --provider <name>  LLM provider (default: anthropic)
   --model <id>       LLM model ID (default: claude-sonnet-4-5-20250929)
+  --debug-agent      Write redacted agent internals to run logs (system prompt, tools, thread events)
   --set <key=value>  Set a pipeline variable (repeatable)
   --verbose          Show detailed event output
 
@@ -72,7 +88,7 @@ function getArgValue(args: string[], flag: string): string | undefined {
   return idx >= 0 ? args[idx + 1] : undefined;
 }
 
-async function runCommand(args: string[]) {
+export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
   // Find DOT file: first positional arg (skip values that follow --flags)
   const flagsWithValues = new Set(["--logs-dir", "--provider", "--model", "--set"]);
   let dotFile: string | undefined;
@@ -87,6 +103,7 @@ async function runCommand(args: string[]) {
   const simulate = args.includes("--simulate");
   const autoApprove = args.includes("--auto-approve");
   const verbose = args.includes("--verbose");
+  const debugAgent = args.includes("--debug-agent");
 
   const logsDir = getArgValue(args, "--logs-dir");
   const provider = getArgValue(args, "--provider");
@@ -144,6 +161,7 @@ async function runCommand(args: string[]) {
 
   // Build runner
   const logsRoot = logsDir ?? path.join(process.cwd(), ".attractor-runs", Date.now().toString());
+  const debugWriter = debugAgent ? createDebugAgentWriter(logsRoot) : null;
   const interviewer = autoApprove
     ? new AutoApproveInterviewer()
     : new ConsoleInterviewer();
@@ -152,10 +170,21 @@ async function runCommand(args: string[]) {
   if (simulate) {
     backend = null;
   } else {
-    backend = new PiAgentCodergenBackend({
+    backend = deps.createBackend({
       cwd: path.dirname(filePath),
       ...(provider && { defaultProvider: provider }),
       ...(model && { defaultModel: model }),
+      ...(debugWriter && {
+        onSessionEvent: (event: SessionEvent) => {
+          debugWriter.writeEvent(event);
+        },
+        onSessionSnapshot: (snapshot: SessionSnapshot) => {
+          debugWriter.writeSnapshot(snapshot);
+        },
+        onWarning: (message: string) => {
+          console.warn(`[WARN] ${message}`);
+        },
+      }),
       onAgentEvent: (event) => {
         if (verbose) {
           console.log(`  [agent] ${event.type}`);
@@ -188,8 +217,12 @@ async function runCommand(args: string[]) {
     console.error(`Pipeline execution error: ${err}`);
     process.exit(1);
   } finally {
-    if (backend && "dispose" in backend) {
-      await (backend as PiAgentCodergenBackend).dispose();
+    if (
+      backend &&
+      "dispose" in backend &&
+      typeof (backend as { dispose?: unknown }).dispose === "function"
+    ) {
+      await (backend as { dispose: () => Promise<void> }).dispose();
     }
   }
 }
@@ -303,7 +336,10 @@ function printEvent(event: PipelineEvent, verbose: boolean) {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+const entryHref = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (import.meta.url === entryHref) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

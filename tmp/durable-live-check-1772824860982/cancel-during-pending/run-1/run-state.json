@@ -1,0 +1,11 @@
+{
+  "runId": "run-1",
+  "status": "cancelled",
+  "currentNode": "review",
+  "completedNodes": [
+    "start"
+  ],
+  "pendingQuestionId": null,
+  "updatedAt": "2026-03-06T19:21:01.030Z",
+  "error": "Pipeline cancelled by user"
+}

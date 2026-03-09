@@ -1,0 +1,30 @@
+{
+  "id": "q-0001",
+  "runId": "run-1",
+  "nodeId": "review",
+  "stage": "review",
+  "status": "cancelled",
+  "question": {
+    "text": "Review Changes",
+    "type": "multiple_choice",
+    "options": [
+      {
+        "key": "A",
+        "label": "[A] Approve"
+      }
+    ],
+    "stage": "review",
+    "metadata": {
+      "resumeQuestionId": ""
+    }
+  },
+  "answer": {
+    "value": "skipped",
+    "questionId": "q-0001"
+  },
+  "createdAt": "2026-03-06T19:21:01.028Z",
+  "answeredAt": "2026-03-06T19:21:01.030Z",
+  "metadata": {
+    "resumeQuestionId": ""
+  }
+}

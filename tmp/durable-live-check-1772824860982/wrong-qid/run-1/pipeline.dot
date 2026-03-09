@@ -1,0 +1,11 @@
+
+  digraph HumanGate {
+    graph [goal="Review pipeline"]
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+    review [shape=hexagon, label="Review Changes"]
+    ship_it [label="Ship It", prompt="Deploy"]
+    start -> review
+    review -> ship_it [label="[A] Approve"]
+    ship_it -> exit
+  }

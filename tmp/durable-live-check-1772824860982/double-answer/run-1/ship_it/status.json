@@ -1,0 +1,10 @@
+{
+  "outcome": "success",
+  "preferred_next_label": "",
+  "suggested_next_ids": [],
+  "context_updates": {
+    "last_stage": "ship_it",
+    "last_response": "[Simulated] Response for stage: ship_it"
+  },
+  "notes": "Stage completed: ship_it"
+}

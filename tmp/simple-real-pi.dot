@@ -1,0 +1,9 @@
+digraph SimpleRealPi {
+    graph [goal="Get pi digits from real model"]
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    ask_pi [label="Ask Pi", prompt="Return exactly the first 50 digits of pi after the decimal point, no explanation."]
+
+    start -> ask_pi -> exit
+}

@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-03-06T19:21:01.023Z",
+  "currentNode": "exit",
+  "completedNodes": [
+    "start",
+    "review",
+    "ship_it",
+    "exit"
+  ],
+  "nodeOutcomes": {
+    "start": {
+      "status": "success"
+    },
+    "review": {
+      "status": "success",
+      "suggestedNextIds": [
+        "ship_it"
+      ],
+      "contextUpdates": {
+        "human.gate.selected": "A",
+        "human.gate.label": "[A] Approve",
+        "internal.waiting_for_question_id": "",
+        "human.gate.question_id": "q-0001"
+      }
+    },
+    "ship_it": {
+      "status": "success",
+      "notes": "Stage completed: ship_it",
+      "contextUpdates": {
+        "last_stage": "ship_it",
+        "last_response": "[Simulated] Response for stage: ship_it"
+      }
+    }
+  },
+  "nodeRetries": {},
+  "context": {
+    "graph.goal": "Review pipeline",
+    "current_node": "exit",
+    "internal.incoming_edge_fidelity": "",
+    "internal.incoming_edge_thread_id": "",
+    "internal.effective_fidelity": "compact",
+    "outcome": "success",
+    "internal.waiting_for_question_id": "",
+    "human.gate.question_id": "q-0001",
+    "human.gate.selected": "A",
+    "human.gate.label": "[A] Approve",
+    "last_stage": "ship_it",
+    "last_response": "[Simulated] Response for stage: ship_it"
+  },
+  "logs": []
+}

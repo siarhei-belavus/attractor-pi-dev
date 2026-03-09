@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-03-06T19:21:01.028Z",
+  "currentNode": "start",
+  "completedNodes": [
+    "start"
+  ],
+  "nodeOutcomes": {
+    "start": {
+      "status": "success"
+    }
+  },
+  "nodeRetries": {},
+  "context": {
+    "graph.goal": "Review pipeline",
+    "current_node": "review",
+    "internal.incoming_edge_fidelity": "",
+    "internal.incoming_edge_thread_id": "",
+    "internal.effective_fidelity": "compact",
+    "outcome": "waiting",
+    "internal.waiting_for_question_id": "q-0001",
+    "human.gate.question_id": "q-0001"
+  },
+  "logs": [],
+  "waitingForQuestionId": "q-0001"
+}
