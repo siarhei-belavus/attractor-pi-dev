@@ -6,23 +6,23 @@ This project uses `br` (beads_rust) for issue tracking and `bv` (beads_viewer) f
 
 ## Quick Reference
 
-| Task | Command |
-| ---- | ------- |
-| What to work on next | `bv --robot-next` |
+| Task                              | Command                                          |
+| --------------------------------- | ------------------------------------------------ |
+| What to work on next              | `bv --robot-next`                                |
 | What to work on next in this epic | `br ready --parent <epic-id> --recursive --json` |
-| View issue details | `br show <id>` |
-| Claim an issue | `br update <id> --status=in_progress` |
-| Complete an issue | `br close <id>` |
-| Create an issue | `br create "Title" --type=task --priority=2` |
-| Search issues | `bv --search "query"` |
-| Plan parallel work | `bv --robot-plan` |
-| Sync before commit | `br sync --flush-only` |
+| View issue details                | `br show <id>`                                   |
+| Claim an issue                    | `br update <id> --status=in_progress`            |
+| Complete an issue                 | `br close <id>`                                  |
+| Create an issue                   | `br create "Title" --type=task --priority=2`     |
+| Search issues                     | `bv --search "query"`                            |
+| Plan parallel work                | `bv --robot-plan`                                |
+| Sync before commit                | `br sync --flush-only`                           |
 
 ## Workflow
 
 1. **Start**: pick the highest leverage task from the list of issues you get from:
-    - `br ready --parent <epic-id> --recursive --json` - if you have an epic id.
-    - `bv --robot-next` - if you don't have an epic id.
+   - `br ready --parent <epic-id> --recursive --json` - if you have an epic id.
+   - `bv --robot-next` - if you don't have an epic id.
 2. **Claim**: `br update <id> --status=in_progress`
 3. **Work**: Implement the task
 4. **Complete**: `br close <id>`
@@ -62,6 +62,7 @@ br close <id1> <id2> <id3>
 ```
 
 **Gotchas:**
+
 - Title is POSITIONAL: `br create "Title"` not `--title="Title"`
 - Dependencies: `br dep add A B` means "A is blocked by B"
 
@@ -94,7 +95,7 @@ br q "Auth token not validated in /api/users" --type=bug
 br dep add <new-issue> <current-task> --type=discovered-from
 ```
 
-Capture *what* and *where*. Let triage decide *how important*.
+Capture _what_ and _where_. Let triage decide _how important_.
 
 ## Viewing the Plan
 
@@ -109,9 +110,9 @@ bv --robot-insights     # Graph analysis (bottlenecks, critical paths)
 
 ### Log Locations
 
-| Mode | Location |
-| ---- | -------- |
-| Foreground | stderr |
+| Mode                  | Location                                            |
+| --------------------- | --------------------------------------------------- |
+| Foreground            | stderr                                              |
 | Detached (`--detach`) | `~/Library/Logs/daisey/daemon.log` and `daemon.err` |
 
 Log level is controlled by `logging.level` in config (default: "info").
@@ -119,21 +120,25 @@ Log level is controlled by `logging.level` in config (default: "info").
 ### Key Log Patterns
 
 **Startup issues:**
+
 - `"Daemon starting"` - daemon is initializing
 - `"Daemon already running"` - another instance exists
 - `"Failed to open database"` - database initialization failed
 
 **Request tracing:**
+
 - `"request{method=GET uri=/search...}: started"` - HTTP request received
 - `"request{...}: finished latency=Xms status=200"` - request completed
 - Look for the request span to trace the full request lifecycle
 
 **Hot reload issues:**
+
 - `"Config file changed, reloading"` - config change detected
 - `"Config reloaded successfully sources=N"` - reload succeeded
 - `"Invalid config, keeping previous"` - config parse error
 
 **Errors:**
+
 - `"Bad request (400)"` - client sent invalid input
 - `"Not found (404)"` - requested resource doesn't exist
 - `"Internal server error (500)"` - server-side failure
@@ -142,12 +147,15 @@ Log level is controlled by `logging.level` in config (default: "info").
 ### Debug Workflow
 
 **For development/testing** - run in foreground:
+
 ```bash
 cargo run --release -- daemon
 ```
+
 Logs go to stderr. Ctrl+C to stop.
 
 **For production issues** with a detached daemon:
+
 1. Check daemon is running: `daisey status`
 2. Tail logs: `tail -f ~/Library/Logs/daisey/daemon.log`
 3. Reproduce the issue and note timestamps
@@ -157,6 +165,7 @@ Logs go to stderr. Ctrl+C to stop.
 ### Increasing Verbosity
 
 Set `logging.level = "debug"` in your config file for detailed logs including:
+
 - File watcher events
 - Pipeline worker activity
 - Database operations

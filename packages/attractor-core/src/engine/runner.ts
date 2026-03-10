@@ -8,13 +8,18 @@ import { StageStatus, failOutcome } from "../state/types.js";
 import { resolveEffectiveFidelity, resolveThreadKey } from "../state/fidelity.js";
 import { EventEmitter, type PipelineEvent } from "../events/index.js";
 import { HandlerRegistry } from "../handlers/registry.js";
-import type { CodergenBackend, Interviewer } from "../handlers/types.js";
+import type {
+  CodergenBackend,
+  Interviewer,
+  ManagerObserverFactory,
+} from "../handlers/types.js";
 import { selectEdge } from "./edge-selection.js";
 import { buildRetryPolicy, delayForAttempt, sleep } from "./retry.js";
 
 export interface RunConfig {
   backend?: CodergenBackend | null;
   interviewer?: Interviewer;
+  managerObserverFactory?: ManagerObserverFactory;
   logsRoot?: string;
   resumeFrom?: string;
   onEvent?: (event: PipelineEvent) => void;
@@ -43,6 +48,7 @@ export class PipelineRunner {
 
     // Wire the subgraph executor into the ParallelHandler
     this.wireParallelHandler();
+    this.wireManagerLoopHandler();
   }
 
   /** Wire the subgraph executor callback into the ParallelHandler */
@@ -53,6 +59,13 @@ export class PipelineRunner {
         (startNodeId, context, graph, logsRoot) =>
           this.executeSubgraph(startNodeId, context, graph, logsRoot),
       );
+    }
+  }
+
+  private wireManagerLoopHandler(): void {
+    const managerLoopHandler = this.registry.getManagerLoopHandler();
+    if (managerLoopHandler && this.config.managerObserverFactory) {
+      managerLoopHandler.setObserverFactory(this.config.managerObserverFactory);
     }
   }
 
@@ -345,6 +358,8 @@ export class PipelineRunner {
           previousNodeId,
         });
         context.set("internal.thread_key", threadKey);
+      } else {
+        context.delete("internal.thread_key");
       }
 
       context.set("internal.effective_fidelity", effectiveFidelity);
@@ -422,6 +437,10 @@ export class PipelineRunner {
       // Step 4: Record completion
       completedNodes.push(node.id);
       nodeOutcomes.set(node.id, outcome);
+      const executedThreadKey = context.getString("internal.thread_key");
+      if (executedThreadKey) {
+        context.set("internal.last_completed_thread_key", executedThreadKey);
+      }
       lastOutcome = outcome;
       stageIndex++;
 

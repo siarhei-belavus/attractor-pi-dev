@@ -11,6 +11,8 @@ import {
   createServer,
   type PipelineEvent,
   type CodergenBackend,
+  type ManagerObserverFactory,
+  type ManagerSteerer,
 } from "@attractor/core";
 import {
   PiAgentCodergenBackend,
@@ -42,7 +44,9 @@ export async function main(argv: string[] = process.argv.slice(2), deps: CliDeps
   } else if (command === "validate") {
     validateCommand(args.slice(1));
   } else if (command === "serve") {
-    await serveCommand(args.slice(1));
+    await serveCommand(args.slice(1), deps);
+  } else if (command === "steer") {
+    await steerCommand(args.slice(1));
   } else {
     console.error(`Unknown command: ${command}`);
     printUsage();
@@ -58,11 +62,13 @@ Usage:
   attractor run <file.dot> [options]
   attractor validate <file.dot>
   attractor serve [options]
+  attractor steer <run-id> --message <text> [options]
 
 Commands:
   run        Execute a pipeline from a DOT file
   validate   Check a DOT file for errors
   serve      Start HTTP server for web-based pipeline management
+  steer      Send a steering message to a running pipeline
 
 Options (run):
   --simulate         Run in simulation mode (no LLM calls)
@@ -77,6 +83,13 @@ Options (run):
 Options (serve):
   --port <number>    Port to listen on (default: 3000)
   --host <addr>      Host to bind to (default: 127.0.0.1)
+  --provider <name>  LLM provider for served runs (default: anthropic)
+  --model <id>       LLM model ID for served runs (default: claude-sonnet-4-5-20250929)
+
+Options (steer):
+  --message <text>   Steering message to inject
+  --port <number>    Server port (default: 3000)
+  --host <addr>      Server host (default: 127.0.0.1)
 
 General:
   --help, -h         Show this help
@@ -271,32 +284,111 @@ function validateCommand(args: string[]) {
   }
 }
 
-async function serveCommand(args: string[]) {
+export async function serveCommand(args: string[], deps: CliDeps = defaultDeps) {
   const port = Number(getArgValue(args, "--port") ?? "3000");
   const host = getArgValue(args, "--host") ?? "127.0.0.1";
+  const provider = getArgValue(args, "--provider");
+  const model = getArgValue(args, "--model");
 
-  const server = createServer();
+  const backend = deps.createBackend({
+    cwd: process.cwd(),
+    ...(provider && { defaultProvider: provider }),
+    ...(model && { defaultModel: model }),
+  });
+
+  const server = createServer({
+    backend,
+    managerObserverFactory: getManagerObserverFactory(backend),
+    managerSteerer: getManagerSteerer(backend),
+  });
 
   server.listen(port, host, () => {
     console.log(`Attractor HTTP server listening on http://${host}:${port}`);
     console.log("Endpoints:");
-    console.log("  POST /run          - Start a pipeline (JSON body: { dotSource })");
-    console.log("  GET  /status/:id   - Get run status");
-    console.log("  POST /answer/:id   - Submit human-in-the-loop answer");
-    console.log("  GET  /events/:id   - SSE event stream");
+    console.log("  POST /pipelines              - Start a pipeline (JSON body: { dotSource })");
+    console.log("  GET  /pipelines/:id          - Get run status");
+    console.log("  POST /pipelines/:id/steer    - Send manager steering");
+    console.log("  POST /pipelines/:id/questions/:qid/answer - Submit human answer");
+    console.log("  GET  /pipelines/:id/events   - SSE event stream");
   });
 
   // Keep the process alive until SIGINT/SIGTERM
   await new Promise<void>((resolve) => {
     process.on("SIGINT", () => {
       console.log("\nShutting down...");
-      server.close(() => resolve());
+      server.close(async () => {
+        if ("dispose" in backend && typeof (backend as { dispose?: unknown }).dispose === "function") {
+          await (backend as { dispose: () => Promise<void> }).dispose();
+        }
+        resolve();
+      });
     });
     process.on("SIGTERM", () => {
       console.log("\nShutting down...");
-      server.close(() => resolve());
+      server.close(async () => {
+        if ("dispose" in backend && typeof (backend as { dispose?: unknown }).dispose === "function") {
+          await (backend as { dispose: () => Promise<void> }).dispose();
+        }
+        resolve();
+      });
     });
   });
+}
+
+export async function steerCommand(args: string[]) {
+  const runId = args.find((arg) => !arg.startsWith("--"));
+  const message = getArgValue(args, "--message");
+  const port = Number(getArgValue(args, "--port") ?? "3000");
+  const host = getArgValue(args, "--host") ?? "127.0.0.1";
+
+  if (!runId) {
+    console.error("Error: No run ID specified");
+    process.exit(1);
+  }
+  if (!message) {
+    console.error("Error: --message is required");
+    process.exit(1);
+  }
+
+  const response = await fetch(`http://${host}:${port}/pipelines/${runId}/steer`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ message }),
+  });
+
+  const data = await response.json() as Record<string, unknown>;
+  if (!response.ok) {
+    console.error(String(data.error ?? `HTTP ${response.status}`));
+    process.exit(1);
+  }
+
+  console.log(`Steering accepted for ${runId}`);
+}
+
+function getManagerObserverFactory(
+  backend: CodergenBackend,
+): ManagerObserverFactory | undefined {
+  if (
+    "createManagerObserverFactory" in backend &&
+    typeof (backend as { createManagerObserverFactory?: unknown }).createManagerObserverFactory === "function"
+  ) {
+    return (backend as {
+      createManagerObserverFactory: () => ManagerObserverFactory;
+    }).createManagerObserverFactory();
+  }
+  return undefined;
+}
+
+function getManagerSteerer(backend: CodergenBackend): ManagerSteerer | undefined {
+  if ("steer" in backend && typeof (backend as { steer?: unknown }).steer === "function") {
+    return {
+      steer: (bindingKey: string, message: string) =>
+        (backend as { steer: (bindingKey: string, message: string) => Promise<{ applied: boolean; notes?: string }> }).steer(bindingKey, message),
+    };
+  }
+  return undefined;
 }
 
 function printEvent(event: PipelineEvent, verbose: boolean) {

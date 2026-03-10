@@ -90,3 +90,17 @@ export interface ManagerObserver {
   /** Steer the child pipeline by injecting guidance */
   steer(context: Context, node: GraphNode): Promise<SteerResult>;
 }
+
+export interface ManagerObserverFactoryInput {
+  node: GraphNode;
+  context: Context;
+  graph: Graph;
+  logsRoot: string;
+}
+
+export type ManagerObserverFactory =
+  (input: ManagerObserverFactoryInput) => Promise<ManagerObserver | null | undefined> | ManagerObserver | null | undefined;
+
+export interface ManagerSteerer {
+  steer(bindingKey: string, message: string): Promise<SteerResult>;
+}

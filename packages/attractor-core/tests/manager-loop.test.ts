@@ -43,17 +43,16 @@ const stubGraph = {} as Graph;
 const stubLogsRoot = "/tmp/test-logs";
 
 describe("ManagerLoopHandler", () => {
-  describe("without observer (backward compatibility)", () => {
-    it("returns SUCCESS with no observer wired", async () => {
+  describe("without observer", () => {
+    it("fails fast when no observer is wired", async () => {
       const handler = new ManagerLoopHandler();
       const node = makeManagerNode({
         attrs: { "manager.max_cycles": "5" },
       });
       const ctx = new Context();
       const result = await handler.execute(node, ctx, stubGraph, stubLogsRoot);
-      expect(result.status).toBe(StageStatus.SUCCESS);
-      expect(result.notes).toContain("no observer");
-      expect(result.notes).toContain("max_cycles=5");
+      expect(result.status).toBe(StageStatus.FAIL);
+      expect(result.failureReason).toContain("observer wiring is missing");
     });
   });
 

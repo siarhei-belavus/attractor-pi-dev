@@ -3,7 +3,7 @@ import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { createServer, type HttpPipelineServer } from "../src/server/index.js";
+import { createServer, type HttpPipelineServer, type ServerConfig } from "../src/server/index.js";
 
 /** Simple pipeline DOT source for testing */
 const SIMPLE_DOT = `
@@ -28,6 +28,17 @@ const HUMAN_GATE_DOT = `
     start -> review
     review -> ship_it [label="[A] Approve"]
     ship_it -> exit
+  }
+`;
+
+const MANAGER_LOOP_DOT = `
+  digraph ManagerLoop {
+    graph [goal="Observe child", default_fidelity="full"]
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+    child [label="Child", prompt="Do child work", thread_id="child-thread"]
+    manager [shape=house, label="Manager"]
+    start -> child -> manager -> exit
   }
 `;
 
@@ -188,11 +199,11 @@ async function waitForStatus(
   );
 }
 
-async function restartServer(): Promise<void> {
+async function restartServer(config: ServerConfig = {}): Promise<void> {
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
   });
-  server = createServer({ logsRoot: tmpLogsRoot }) as HttpPipelineServer;
+  server = createServer({ logsRoot: tmpLogsRoot, ...config }) as HttpPipelineServer;
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", () => resolve());
   });
@@ -575,6 +586,63 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
         ),
       ),
     ).not.toThrow();
+  });
+});
+
+describe("HTTP Server: POST /pipelines/{id}/steer", () => {
+  it("steers a running manager loop through the configured steerer", async () => {
+    const delivered: Array<{ bindingKey: string; message: string }> = [];
+
+    await restartServer({
+      managerObserverFactory: async () => ({
+        observe: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          return { childStatus: "completed", childOutcome: "success" };
+        },
+        steer: async () => ({ applied: false }),
+      }),
+      managerSteerer: {
+        steer: async (bindingKey, message) => {
+          delivered.push({ bindingKey, message });
+          return { applied: true };
+        },
+      },
+    });
+
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: MANAGER_LOOP_DOT,
+    });
+    const runId = runData.runId as string;
+
+    const status = await waitForStatus(runId, ["running"], 5000, 25);
+    expect(status.currentNode).toBe("manager");
+
+    const response = await request("POST", `/pipelines/${runId}/steer`, {
+      message: "Focus on the failing test first.",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(delivered).toEqual([
+      {
+        bindingKey: "child-thread",
+        message: "Focus on the failing test first.",
+      },
+    ]);
+  });
+
+  it("returns 409 when no active manager-loop-bound child session exists", async () => {
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: SIMPLE_DOT,
+    });
+    const runId = runData.runId as string;
+
+    await waitForStatus(runId, ["completed"]);
+    const response = await request("POST", `/pipelines/${runId}/steer`, {
+      message: "Hello",
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.data.error).toContain("already completed");
   });
 });
 

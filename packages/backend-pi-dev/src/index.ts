@@ -1,6 +1,10 @@
 // Backend (Attractor integration)
 export { PiAgentCodergenBackend } from "./backend.js";
-export type { PiAgentBackendOptions, SessionSnapshot } from "./backend.js";
+export type {
+  PiAgentBackendOptions,
+  SessionSnapshot,
+  PiSessionObserverSnapshot,
+} from "./backend.js";
 
 // Session
 export { Session, SessionState } from "./session.js";
@@ -10,6 +14,7 @@ export type {
   SessionEventKind,
   SessionEventListener,
   SessionOptions,
+  SessionRuntimeSnapshot,
 } from "./session.js";
 
 // Provider Profiles

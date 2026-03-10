@@ -37,6 +37,9 @@ attractor-pi validate workflow.dot
 # Run a pipeline
 attractor-pi run workflow.dot
 
+# Send a steering message to a running manager loop
+attractor-pi steer run-12 --message "Focus on the failing test first"
+
 # Run without LLM calls (simulation mode)
 attractor-pi run workflow.dot --simulate
 
@@ -54,7 +57,7 @@ The engine reads a `.dot` file, builds a directed graph, validates it, then walk
 4. Save a checkpoint
 5. Repeat until reaching the exit node
 
-Pipelines support retries, goal gates, conditional branching, parallel fan-out/fan-in, human-in-the-loop approvals, per-node model configuration, and checkpoint/resume.
+Pipelines support retries, goal gates, conditional branching, parallel fan-out/fan-in, human-in-the-loop approvals, manager-loop observation/steering, per-node model configuration, and checkpoint/resume.
 
 ## Example
 
@@ -109,12 +112,13 @@ More examples in [`examples/`](examples/).
 
 ## How this differs from the spec
 
-This implementation covers the core execution engine, parser, validation, and all node types. Two things from the [specification](docs/specs/attractor-spec.md) are not yet wired end-to-end:
+This implementation covers the core execution engine, parser, validation, and all node types. One thing from the [specification](docs/specs/attractor-spec.md) is not yet wired end-to-end:
 
-- **Manager/supervisor loops** -- handler is fully coded, but the runner does not wire the observer, so it falls back to a no-op
 - **Checkpoint resume from CLI** -- checkpoints are saved after every node; the runner supports `resumeFrom`, but the CLI does not expose a `--resume` flag yet
 
 The spec checklists in [`docs/specs/`](docs/specs/) track what is and is not done.
+
+Manager loops now work end-to-end when the runtime is backed by `@attractor/backend-pi-dev`. The manager binds to the last completed child thread key, observes that live pi session, and accepts steering through both `POST /pipelines/{id}/steer` and `attractor-pi steer <run-id> --message "..."`
 
 This implementation adds:
 

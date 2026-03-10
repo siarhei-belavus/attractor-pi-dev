@@ -9,7 +9,7 @@ import { StageStatus } from "../src/state/types.js";
 import { validate, Severity } from "../src/validation/index.js";
 import type { PipelineEvent } from "../src/events/index.js";
 import { AutoApproveInterviewer, QueueInterviewer } from "../src/handlers/interviewers.js";
-import type { Answer } from "../src/handlers/types.js";
+import type { Answer, ManagerObserverFactory } from "../src/handlers/types.js";
 import { Checkpoint } from "../src/state/checkpoint.js";
 
 let tmpDir: string;
@@ -232,6 +232,64 @@ describe("Integration: PipelineRunner", () => {
     const result = await runner.run(graph);
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
     expect(result.context.getString("custom.ran")).toBe("true");
+  });
+
+  it("wires manager loop observers through PipelineRunner", async () => {
+    const { graph } = preparePipeline(`
+      digraph ManagerLoop {
+        graph [goal="Supervise child", default_fidelity="full"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        child [label="Child", prompt="Do the work", thread_id="child-thread"]
+        manager [shape=house, label="Manager"]
+        start -> child -> manager -> exit
+      }
+    `);
+    graph.getNode("manager").attrs["manager.actions"] = "observe";
+    graph.getNode("manager").attrs["manager.max_cycles"] = "2";
+
+    let seenBindingKey = "";
+    const managerObserverFactory: ManagerObserverFactory = async ({ context }) => {
+      seenBindingKey = context.getString("internal.last_completed_thread_key");
+      return {
+        observe: async () => ({
+          childStatus: "completed",
+          childOutcome: "success",
+          telemetry: { thread_key: seenBindingKey },
+        }),
+        steer: async () => ({ applied: false }),
+      };
+    };
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      managerObserverFactory,
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(seenBindingKey).toBe("child-thread");
+    expect(result.context.getString("stack.child.telemetry.thread_key")).toBe("child-thread");
+  });
+
+  it("fails manager loop execution when observer wiring is missing", async () => {
+    const { graph } = preparePipeline(`
+      digraph ManagerLoopMissingObserver {
+        graph [goal="Supervise child"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        child [label="Child", prompt="Do the work"]
+        manager [shape=house, label="Manager"]
+        start -> child -> manager -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.FAIL);
+    expect(result.outcome.failureReason).toContain("observer wiring is missing");
   });
 
   it("variable expansion ($goal) works", () => {

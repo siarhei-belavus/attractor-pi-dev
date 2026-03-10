@@ -6,7 +6,12 @@ import { preparePipeline } from "../engine/pipeline.js";
 import { PipelineRunner } from "../engine/runner.js";
 import type { RunConfig, RunResult } from "../engine/runner.js";
 import type { PipelineEvent, EventListener } from "../events/index.js";
-import type { Answer, CodergenBackend } from "../handlers/types.js";
+import type {
+  Answer,
+  CodergenBackend,
+  ManagerObserverFactory,
+  ManagerSteerer,
+} from "../handlers/types.js";
 import { StageStatus } from "../state/types.js";
 import { Checkpoint } from "../state/checkpoint.js";
 import type { Graph } from "../model/graph.js";
@@ -33,6 +38,7 @@ export interface RunState {
   events: PipelineEvent[];
   eventListeners: Set<EventListener>;
   pendingQuestionId: string | null;
+  activeManagerBindingKey: string | null;
   cancelled: boolean;
   runStateStore: RunStateStore;
   questionStore: QuestionStore;
@@ -40,6 +46,8 @@ export interface RunState {
 
 export interface ServerConfig {
   backend?: CodergenBackend | null;
+  managerObserverFactory?: ManagerObserverFactory;
+  managerSteerer?: ManagerSteerer;
   logsRoot?: string;
 }
 
@@ -169,6 +177,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       events: [],
       eventListeners: new Set(),
       pendingQuestionId: null,
+      activeManagerBindingKey: null,
       cancelled: initialStatus === "cancelled",
       runStateStore,
       questionStore,
@@ -202,10 +211,21 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       backend: serverConfig.backend ?? null,
       interviewer,
       logsRoot: run.logsRoot,
+      ...(serverConfig.managerObserverFactory
+        ? {
+            managerObserverFactory: async (input) => {
+              const bindingKey =
+                input.context.getString("internal.last_completed_thread_key") || null;
+              run.activeManagerBindingKey = bindingKey;
+              return serverConfig.managerObserverFactory!(input);
+            },
+          }
+        : {}),
       ...(resumeFrom ? { resumeFrom } : {}),
       onEvent: (event: PipelineEvent) => {
         if (event.type === "stage_started") {
           run.currentNode = event.name;
+          run.activeManagerBindingKey = null;
           if (!run.cancelled && run.status !== "waiting_for_answer") {
             run.status = "running";
           }
@@ -239,6 +259,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
           run.status = result.outcome.status === StageStatus.FAIL ? "failed" : "completed";
           run.pendingQuestionId = null;
         }
+        run.activeManagerBindingKey = null;
         run.completedNodes = [...result.completedNodes];
         if (result.outcome.status !== StageStatus.WAITING) {
           run.currentNode = run.completedNodes[run.completedNodes.length - 1] ?? null;
@@ -254,6 +275,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
         run.status = "failed";
         run.error = String(err);
         run.pendingQuestionId = null;
+        run.activeManagerBindingKey = null;
         persistRunState(run);
       });
   }
@@ -523,6 +545,73 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     sendJson(res, 200, { accepted: true, questionId });
   }
 
+  async function handlePostSteer(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    runId: string,
+  ): Promise<void> {
+    const run = runs.get(runId);
+    if (!run) {
+      sendError(res, 404, `Unknown runId: ${runId}`);
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      sendError(res, 400, "Failed to read request body");
+      return;
+    }
+
+    let parsed: { message?: string };
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      sendError(res, 400, "Invalid JSON");
+      return;
+    }
+
+    if (!parsed.message || typeof parsed.message !== "string") {
+      sendError(res, 400, "Missing or invalid message");
+      return;
+    }
+
+    hydrateFromRunState(run);
+    if (
+      run.status === "completed" ||
+      run.status === "failed" ||
+      run.status === "cancelled"
+    ) {
+      sendError(res, 409, `Pipeline is already ${run.status}`);
+      return;
+    }
+    if (!serverConfig.managerSteerer) {
+      sendError(res, 409, "Manager steering is not configured for this server");
+      return;
+    }
+    if (!run.activeManagerBindingKey) {
+      sendError(res, 409, "Run has no active manager-loop-bound child session");
+      return;
+    }
+
+    const result = await serverConfig.managerSteerer.steer(
+      run.activeManagerBindingKey,
+      parsed.message,
+    );
+    if (!result.applied) {
+      sendError(res, 409, result.notes ?? "Steering was not applied");
+      return;
+    }
+
+    sendJson(res, 200, {
+      accepted: true,
+      runId,
+      bindingKey: run.activeManagerBindingKey,
+      ...(result.notes ? { notes: result.notes } : {}),
+    });
+  }
+
   function handleGetEvents(res: http.ServerResponse, runId: string): void {
     const run = runs.get(runId);
     if (!run) {
@@ -733,6 +822,15 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
           segments[2] === "cancel"
         ) {
           handlePostCancel(res, runId);
+          return;
+        }
+
+        if (
+          method === "POST" &&
+          segments.length === 3 &&
+          segments[2] === "steer"
+        ) {
+          await handlePostSteer(req, res, runId);
           return;
         }
 

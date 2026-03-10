@@ -124,15 +124,41 @@ attractor serve [options]
 |-------------------|-------------|
 | `--port <number>` | Port to listen on. Default: `3000`. |
 | `--host <addr>`   | Host to bind to. Default: `127.0.0.1`. |
+| `--provider <name>` | LLM provider for served runs. Default: `anthropic`. |
+| `--model <id>`    | LLM model ID for served runs. Default: `claude-sonnet-4-5-20250929`. |
 
 **Endpoints:**
 
-| Method | Path              | Description |
-|--------|-------------------|-------------|
-| `POST` | `/run`            | Start a pipeline. JSON body: `{ "dotSource": "..." }`. |
-| `GET`  | `/status/:id`     | Get run status. |
-| `POST` | `/answer/:id`     | Submit a human-in-the-loop answer. |
-| `GET`  | `/events/:id`     | SSE event stream. |
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/pipelines` | Start a pipeline. JSON body: `{ "dotSource": "..." }`. |
+| `GET`  | `/pipelines/{id}` | Get run status. |
+| `POST` | `/pipelines/{id}/steer` | Send a manager-loop steering message. JSON body: `{ "message": "..." }`. |
+| `POST` | `/pipelines/{id}/questions/{qid}/answer` | Submit a human-in-the-loop answer. |
+| `GET`  | `/pipelines/{id}/events` | SSE event stream. |
+
+### `attractor steer`
+
+Send a steering message to a running pipeline through the HTTP server.
+
+```
+attractor steer <run-id> --message <text> [options]
+```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--message <text>` | Steering message to inject. Required. |
+| `--port <number>` | Server port. Default: `3000`. |
+| `--host <addr>` | Server host. Default: `127.0.0.1`. |
+
+**Examples:**
+
+```bash
+attractor steer run-12 --message "Focus on the failing test first"
+attractor steer run-12 --message "Please answer the user's open question" --host 0.0.0.0 --port 4000
+```
 
 ## General Options
 

@@ -3,3 +3,7 @@ dist/
 *.tsbuildinfo
 .DS_Store
 .attractor-runs/
+
+# bv (beads viewer) local config and caches
+.bv/
+.beads/

@@ -10,6 +10,11 @@ import type {
   GraphNode,
   Context,
   Outcome,
+  ManagerObserver,
+  ManagerObserverFactory,
+  ManagerObserverFactoryInput,
+  ObserveResult,
+  SteerResult,
 } from "@attractor/core";
 import { StageStatus } from "@attractor/core";
 import {
@@ -17,6 +22,7 @@ import {
   SessionState,
   type SessionConfig,
   type SessionEvent,
+  type SessionRuntimeSnapshot,
 } from "./session.js";
 import {
   createAnthropicProfile,
@@ -43,6 +49,26 @@ export interface SessionSnapshot {
   activeTools: string[];
   systemPrompt: string;
   toolPolicyDiagnostics: string[];
+}
+
+export interface PiSessionObserverSnapshot {
+  childStatus: "running" | "completed" | "failed";
+  childOutcome?: "success" | "fail";
+  telemetry: {
+    session_state: SessionState;
+    awaiting_input: boolean;
+    last_assistant_text: string;
+    message_count: number;
+    active_tools: string[];
+    tool_policy_diagnostics: string[];
+    thread_key: string;
+    provider: string;
+    model_id: string;
+    turn_count: number;
+    tool_round_count: number;
+    last_activity_at: number | null;
+    failure_reason?: string;
+  };
 }
 
 export interface PiAgentBackendOptions {
@@ -89,6 +115,7 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     >
   > & PiAgentBackendOptions;
   private sessions = new Map<string, Session>();
+  private sessionMetadata = new Map<string, { provider: string; modelId: string }>();
   private authStorage: AuthStorage;
   private modelRegistry: ModelRegistry;
   private executionEnv?: ExecutionEnvironment;
@@ -129,6 +156,7 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     let session: Session;
     if (this.options.reuseSessions && this.sessions.has(threadKey)) {
       session = this.sessions.get(threadKey)!;
+      this.sessionMetadata.set(threadKey, { provider, modelId });
       // Update reasoning effort if needed
       session.setReasoningEffort(thinkingLevel);
     } else {
@@ -155,6 +183,7 @@ export class PiAgentCodergenBackend implements CodergenBackend {
 
       if (this.options.reuseSessions) {
         this.sessions.set(threadKey, session);
+        this.sessionMetadata.set(threadKey, { provider, modelId });
       }
     }
 
@@ -246,6 +275,9 @@ export class PiAgentCodergenBackend implements CodergenBackend {
 
   /** Determine session reuse key from node/context */
   private resolveThreadKey(node: GraphNode, context: Context): string {
+    const effectiveFidelity = context.getString("internal.effective_fidelity");
+    const resolvedThreadKey = context.getString("internal.thread_key");
+    if (effectiveFidelity === "full" && resolvedThreadKey) return resolvedThreadKey;
     // 1. Explicit thread_id on node
     if (node.threadId) return node.threadId;
     // 2. Derived from class (subgraph)
@@ -260,6 +292,71 @@ export class PiAgentCodergenBackend implements CodergenBackend {
       await session.dispose();
     }
     this.sessions.clear();
+    this.sessionMetadata.clear();
+  }
+
+  createManagerObserverFactory(): ManagerObserverFactory {
+    return (input) => new PiManagerObserver(this, input);
+  }
+
+  async steer(bindingKey: string, message: string): Promise<SteerResult> {
+    const session = this.sessions.get(bindingKey);
+    if (!session) {
+      return { applied: false, notes: `No session found for binding key '${bindingKey}'` };
+    }
+    session.steer(message);
+    return { applied: true, notes: `Steering delivered to '${bindingKey}'` };
+  }
+
+  getObserverSnapshot(bindingKey: string): PiSessionObserverSnapshot | null {
+    const session = this.sessions.get(bindingKey);
+    if (!session) {
+      return null;
+    }
+
+    const runtime = session.getRuntimeSnapshot();
+    const metadata = this.sessionMetadata.get(bindingKey) ?? {
+      provider: this.options.defaultProvider,
+      modelId: this.options.defaultModel,
+    };
+    const childStatus = this.mapChildStatus(runtime);
+    const childOutcome = runtime.terminalOutcome ?? undefined;
+
+    return {
+      childStatus,
+      ...(childOutcome ? { childOutcome } : {}),
+      telemetry: {
+        session_state: runtime.state,
+        awaiting_input: runtime.awaitingInput,
+        last_assistant_text: runtime.lastAssistantText,
+        message_count: runtime.messageCount,
+        active_tools: runtime.activeTools,
+        tool_policy_diagnostics: runtime.toolPolicyDiagnostics,
+        thread_key: bindingKey,
+        provider: metadata.provider,
+        model_id: metadata.modelId,
+        turn_count: runtime.turnCount,
+        tool_round_count: runtime.toolRoundCount,
+        last_activity_at: runtime.lastActivityAt,
+        ...(runtime.failureReason ? { failure_reason: runtime.failureReason } : {}),
+      },
+    };
+  }
+
+  private mapChildStatus(runtime: SessionRuntimeSnapshot): "running" | "completed" | "failed" {
+    if (runtime.state === SessionState.PROCESSING) {
+      return "running";
+    }
+    if (runtime.state === SessionState.AWAITING_INPUT) {
+      return "running";
+    }
+    if (runtime.terminalOutcome === "success") {
+      return "completed";
+    }
+    if (runtime.terminalOutcome === "fail") {
+      return "failed";
+    }
+    return "running";
   }
 
   private warn(message: string): void {
@@ -286,5 +383,39 @@ export class PiAgentCodergenBackend implements CodergenBackend {
       systemPrompt: session.getSystemPrompt() ?? "",
       toolPolicyDiagnostics: session.getToolPolicyDiagnostics(),
     });
+  }
+}
+
+class PiManagerObserver implements ManagerObserver {
+  private readonly bindingKey: string;
+
+  constructor(
+    private readonly backend: PiAgentCodergenBackend,
+    input: ManagerObserverFactoryInput,
+  ) {
+    const bindingKey = input.context.getString("internal.last_completed_thread_key");
+    if (!bindingKey) {
+      throw new Error("Manager loop child binding key is missing");
+    }
+    this.bindingKey = bindingKey;
+  }
+
+  async observe(_context: Context): Promise<ObserveResult> {
+    const snapshot = this.backend.getObserverSnapshot(this.bindingKey);
+    if (!snapshot) {
+      throw new Error(`Manager loop child session '${this.bindingKey}' is unavailable`);
+    }
+    return snapshot;
+  }
+
+  async steer(context: Context, node: GraphNode): Promise<SteerResult> {
+    const message =
+      context.getString("manager.steering_message") ||
+      context.getString("stack.manager.steering_message") ||
+      String(node.attrs["manager.steering_message"] ?? "").trim();
+    if (!message) {
+      return { applied: false, notes: "No steering message available" };
+    }
+    return this.backend.steer(this.bindingKey, message);
   }
 }

@@ -120,6 +120,20 @@ export interface SessionOptions {
   onWarning?: (message: string) => void;
 }
 
+export interface SessionRuntimeSnapshot {
+  state: SessionState;
+  awaitingInput: boolean;
+  lastAssistantText: string;
+  messageCount: number;
+  activeTools: string[];
+  toolPolicyDiagnostics: string[];
+  turnCount: number;
+  toolRoundCount: number;
+  lastActivityAt: number | null;
+  terminalOutcome: "success" | "fail" | null;
+  failureReason: string | null;
+}
+
 /**
  * Session wraps pi-mono's Agent/AgentSession with spec-compliant behavior:
  * - State machine (IDLE/PROCESSING/AWAITING_INPUT/CLOSED)
@@ -154,6 +168,9 @@ export class Session {
   private rawToolOutputs = new Map<string, string>();
   /** Set when turn/round limits are hit, checked by tool wrappers */
   private _shouldStop = false;
+  private terminalOutcome: "success" | "fail" | null = null;
+  private failureReason: string | null = null;
+  private lastActivityAt: number | null = null;
 
   constructor(opts: SessionOptions) {
     this.id = crypto.randomUUID();
@@ -190,6 +207,7 @@ export class Session {
   }
 
   private emit(kind: SessionEventKind, data: Record<string, unknown> = {}): void {
+    this.lastActivityAt = Date.now();
     const event: SessionEvent = {
       kind,
       timestamp: Date.now(),
@@ -394,12 +412,18 @@ export class Session {
     this.setState(SessionState.PROCESSING);
     this.roundCount = 0;
     this._shouldStop = false;
+    this.terminalOutcome = null;
+    this.failureReason = null;
     this.emit("user_input", { content: input });
 
+    let hadExecutionError = false;
     try {
       await this.agentSession!.prompt(input);
       await this.agentSession!.agent.waitForIdle();
     } catch (err) {
+      hadExecutionError = true;
+      this.terminalOutcome = "fail";
+      this.failureReason = String(err);
       this.emit("error", { message: String(err) });
       if (isUnrecoverableError(err)) {
         this.setState(SessionState.CLOSED);
@@ -407,12 +431,22 @@ export class Session {
       }
     }
 
+    if (hadExecutionError) {
+      this.setState(SessionState.IDLE);
+      this.emit("session_end", { totalTurns: this.totalTurns });
+      return;
+    }
+
     // Detect if the assistant is asking a question (Gap 5: AWAITING_INPUT)
     const lastText = this.getLastAssistantText()?.trim();
     if (lastText && looksLikeQuestion(lastText)) {
       this.setState(SessionState.AWAITING_INPUT);
+      this.terminalOutcome = null;
+      this.failureReason = null;
     } else {
       this.setState(SessionState.IDLE);
+      this.terminalOutcome = "success";
+      this.failureReason = null;
     }
 
     this.emit("session_end", { totalTurns: this.totalTurns });
@@ -489,6 +523,22 @@ export class Session {
   /** Get deterministic tool-policy diagnostics captured at initialization. */
   getToolPolicyDiagnostics(): string[] {
     return [...this.toolPolicyDiagnostics];
+  }
+
+  getRuntimeSnapshot(): SessionRuntimeSnapshot {
+    return {
+      state: this._state,
+      awaitingInput: this._state === SessionState.AWAITING_INPUT,
+      lastAssistantText: this.getLastAssistantText() ?? "",
+      messageCount: this.getMessages().length,
+      activeTools: this.getActiveToolNames(),
+      toolPolicyDiagnostics: this.getToolPolicyDiagnostics(),
+      turnCount: this.totalTurns,
+      toolRoundCount: this.roundCount,
+      lastActivityAt: this.lastActivityAt,
+      terminalOutcome: this.terminalOutcome,
+      failureReason: this.failureReason,
+    };
   }
 
   // ─── Internal Event Handling ─────────────────────────────────────────────

@@ -11,6 +11,7 @@ import type {
   Interviewer,
   QuestionOption,
   ManagerObserver,
+  ManagerObserverFactory,
 } from "./types.js";
 import { QuestionType, AnswerValue } from "./types.js";
 import { evaluateCondition } from "../conditions/index.js";
@@ -684,6 +685,7 @@ export class ToolHandler implements Handler {
 /** Manager loop handler — implements the full observe/steer cycle per spec §4.11 */
 export class ManagerLoopHandler implements Handler {
   private observer?: ManagerObserver;
+  private observerFactory?: ManagerObserverFactory;
   private lastSteerTime = 0;
 
   /** Wire an observer for the observe/steer cycle (analogous to ParallelHandler.setSubgraphExecutor) */
@@ -691,11 +693,15 @@ export class ManagerLoopHandler implements Handler {
     this.observer = observer;
   }
 
+  setObserverFactory(factory: ManagerObserverFactory): void {
+    this.observerFactory = factory;
+  }
+
   async execute(
     node: GraphNode,
     context: Context,
-    _graph: Graph,
-    _logsRoot: string,
+    graph: Graph,
+    logsRoot: string,
   ): Promise<Outcome> {
     const maxCycles = parseInt(String(node.attrs["manager.max_cycles"] ?? "1000"), 10);
     const pollIntervalStr = String(node.attrs["manager.poll_interval"] ?? "45s");
@@ -710,11 +716,17 @@ export class ManagerLoopHandler implements Handler {
     const actions = new Set(actionsStr.split(",").map((a) => a.trim()).filter(Boolean));
     const steerCooldownMs = parseInt(String(node.attrs["manager.steer_cooldown_ms"] ?? String(pollIntervalMs)), 10);
 
-    if (!this.observer) {
-      // No observer wired: fall back to simple success (backward-compatible)
-      return successOutcome({
-        notes: `Manager loop completed (max_cycles=${maxCycles}, no observer)`,
-      });
+    const observer =
+      this.observer ??
+      (await this.observerFactory?.({
+        node,
+        context,
+        graph,
+        logsRoot,
+      }));
+
+    if (!observer) {
+      return failOutcome("Manager loop observer wiring is missing");
     }
 
     // Reset steer timer for this execution
@@ -725,7 +737,7 @@ export class ManagerLoopHandler implements Handler {
 
       // 1. Observe
       if (actions.has("observe")) {
-        const observeResult = await this.observer.observe(context);
+        const observeResult = await observer.observe(context);
 
         // Write telemetry into context
         context.set("stack.child.status", observeResult.childStatus);
@@ -741,7 +753,7 @@ export class ManagerLoopHandler implements Handler {
 
       // 2. Steer (with cooldown)
       if (actions.has("steer") && this.steerCooldownElapsed(steerCooldownMs)) {
-        await this.observer.steer(context, node);
+        await observer.steer(context, node);
         this.lastSteerTime = Date.now();
       }
 

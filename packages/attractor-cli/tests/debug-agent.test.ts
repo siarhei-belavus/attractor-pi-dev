@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "no
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createDebugAgentWriter } from "../src/debug-agent.js";
-import { runCommand } from "../src/index.js";
+import { runCommand, steerCommand } from "../src/index.js";
 
 describe("debug agent writer", () => {
   const tempDirs: string[] = [];
@@ -114,5 +114,32 @@ describe("debug agent writer", () => {
     expect(tools).toContain("\"activeTools\"");
     expect(thread).toContain("[REDACTED]");
     expect(thread).not.toContain("should-hide");
+  });
+
+  it("sends steering requests through the HTTP API", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ accepted: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await steerCommand([
+      "run-42",
+      "--message",
+      "Tighten the scope",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "4111",
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:4111/pipelines/run-42/steer",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ message: "Tighten the scope" }),
+      }),
+    );
   });
 });

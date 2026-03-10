@@ -456,6 +456,36 @@ describe("Integration: thread resolution in runner", () => {
     expect(capturedThreads["a"]).toBe("");
   });
 
+  it("clears a previously resolved thread key when the next node is not full fidelity", async () => {
+    const { graph } = preparePipeline(`
+      digraph MixedFidelity {
+        graph [goal="Test mixed fidelity", default_fidelity="compact"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        a [type="thread_check", prompt="A", fidelity="full", thread_id="full-thread"]
+        b [type="thread_check", prompt="B", fidelity="compact"]
+        start -> a -> b -> exit
+      }
+    `);
+
+    const capturedThreads: Record<string, string> = {};
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+    runner.registerHandler("thread_check", {
+      async execute(node, ctx, _graph, _logsRoot) {
+        capturedThreads[node.id] = ctx.getString("internal.thread_key");
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: { last_stage: node.id },
+        };
+      },
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(capturedThreads["a"]).toBe("full-thread");
+    expect(capturedThreads["b"]).toBe("");
+  });
+
   it("uses edge thread_id when node has none", async () => {
     const { graph } = preparePipeline(`
       digraph EdgeThread {
