@@ -5,6 +5,9 @@ import {
   type AgentSessionEvent,
 } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type {
   AttachedExecutionSnapshot,
   AttachedExecutionSupervisor,
@@ -99,6 +102,44 @@ export interface PiAgentBackendOptions {
   steeringQueue?: SteeringQueue;
 }
 
+interface PiAgentSettingsDefaults {
+  defaultProvider?: string;
+  defaultModel?: string;
+}
+
+function resolvePiAgentDir(): string {
+  const envDir = process.env["PI_CODING_AGENT_DIR"];
+  if (!envDir) {
+    return join(homedir(), ".pi", "agent");
+  }
+  if (envDir === "~") {
+    return homedir();
+  }
+  if (envDir.startsWith("~/")) {
+    return join(homedir(), envDir.slice(2));
+  }
+  return envDir;
+}
+
+function loadPiAgentSettingsDefaults(): PiAgentSettingsDefaults {
+  const settingsPath = join(resolvePiAgentDir(), "settings.json");
+  if (!existsSync(settingsPath)) {
+    return {};
+  }
+
+  try {
+    const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
+    return {
+      ...(typeof raw["defaultProvider"] === "string"
+        ? { defaultProvider: raw["defaultProvider"] }
+        : {}),
+      ...(typeof raw["defaultModel"] === "string" ? { defaultModel: raw["defaultModel"] } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
 /**
  * CodergenBackend implementation using pi-mono's coding agent,
  * wrapped with spec-compliant Session (state machine, limits, loop detection).
@@ -124,9 +165,10 @@ export class PiAgentCodergenBackend
   private resourcePolicy: PiResourcePolicy;
 
   constructor(opts?: PiAgentBackendOptions) {
+    const piDefaults = loadPiAgentSettingsDefaults();
     this.options = {
-      defaultProvider: opts?.defaultProvider ?? "anthropic",
-      defaultModel: opts?.defaultModel ?? "claude-sonnet-4-5-20250929",
+      defaultProvider: opts?.defaultProvider ?? piDefaults.defaultProvider ?? "anthropic",
+      defaultModel: opts?.defaultModel ?? piDefaults.defaultModel ?? "claude-sonnet-4-5-20250929",
       defaultThinkingLevel: opts?.defaultThinkingLevel ?? "high",
       cwd: opts?.cwd ?? process.cwd(),
       reuseSessions: opts?.reuseSessions ?? true,
@@ -241,6 +283,14 @@ export class PiAgentCodergenBackend
       modelId,
       context.getString("internal.current_node_id") || undefined,
     );
+
+    const runtime = session.getRuntimeSnapshot();
+    if (runtime.terminalOutcome === "fail") {
+      return {
+        status: StageStatus.FAIL,
+        failureReason: runtime.failureReason || "Agent execution failed",
+      };
+    }
 
     // Extract the assistant's text response
     const responseText = session.getLastAssistantText() ?? "";

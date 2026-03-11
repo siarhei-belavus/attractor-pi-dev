@@ -437,6 +437,16 @@ export class Session {
       return;
     }
 
+    const terminalMessageError = this.getTerminalAssistantError();
+    if (terminalMessageError) {
+      this.terminalOutcome = "fail";
+      this.failureReason = terminalMessageError;
+      this.emit("error", { message: terminalMessageError });
+      this.setState(SessionState.IDLE);
+      this.emit("session_end", { totalTurns: this.totalTurns });
+      return;
+    }
+
     // Detect if the assistant is asking a question (Gap 5: AWAITING_INPUT)
     const lastText = this.getLastAssistantText()?.trim();
     if (lastText && looksLikeQuestion(lastText)) {
@@ -539,6 +549,24 @@ export class Session {
       terminalOutcome: this.terminalOutcome,
       failureReason: this.failureReason,
     };
+  }
+
+  private getTerminalAssistantError(): string | null {
+    const messages = this.getMessages();
+    const lastMessage = messages[messages.length - 1] as
+      | {
+          role?: string;
+          stopReason?: string;
+          errorMessage?: string;
+        }
+      | undefined;
+    if (!lastMessage || lastMessage.role !== "assistant") {
+      return null;
+    }
+    if (lastMessage.stopReason === "error" && lastMessage.errorMessage) {
+      return String(lastMessage.errorMessage);
+    }
+    return null;
   }
 
   // ─── Internal Event Handling ─────────────────────────────────────────────

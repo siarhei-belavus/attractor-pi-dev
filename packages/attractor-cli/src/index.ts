@@ -89,8 +89,8 @@ Options (run):
   --auto-approve     Auto-approve all human gates
   --logs-dir <path>  Output directory for logs (default: .attractor-runs/<timestamp>)
   --resume-from <path> Resume from an existing run checkpoint directory
-  --provider <name>  LLM provider (default: anthropic)
-  --model <id>       LLM model ID (default: claude-sonnet-4-5-20250929)
+  --provider <name>  LLM provider (default: pi settings, else anthropic)
+  --model <id>       LLM model ID (default: pi settings, else claude-sonnet-4-5-20250929)
   --debug-agent      Write redacted agent internals to run logs (system prompt, tools, thread events)
   --set <key=value>  Set a pipeline variable (repeatable)
   --verbose          Show detailed event output
@@ -98,8 +98,8 @@ Options (run):
 Options (serve):
   --port <number>    Port to listen on (default: 3000)
   --host <addr>      Host to bind to (default: 127.0.0.1)
-  --provider <name>  LLM provider for served runs (default: anthropic)
-  --model <id>       LLM model ID for served runs (default: claude-sonnet-4-5-20250929)
+  --provider <name>  LLM provider for served runs (default: pi settings, else anthropic)
+  --model <id>       LLM model ID for served runs (default: pi settings, else claude-sonnet-4-5-20250929)
 
 Options (steer):
   --message <text>   Steering message to inject
@@ -438,11 +438,4 @@ function printEvent(event: PipelineEvent, verbose: boolean) {
     default:
       if (verbose) console.log(`[${ts}] ${event.type}`);
   }
-}
-
-if (shouldRunAsCliEntry()) {
-  main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
 }
