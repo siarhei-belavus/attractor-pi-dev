@@ -1,0 +1,14 @@
+digraph ResumeConditionalPartialRoute {
+  graph [goal="Resume and route a partial outcome"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  chooser [shape=diamond, label="Pick route"]
+  recover [label="Recover", prompt="Recover after partial work"]
+  success_branch [label="Ship", prompt="Ship the work"]
+  start -> chooser
+  chooser -> recover [label="Recover", condition="outcome=partial_success"]
+  chooser -> success_branch [label="Ship", condition="outcome=success"]
+  recover -> exit
+  success_branch -> exit
+}
+

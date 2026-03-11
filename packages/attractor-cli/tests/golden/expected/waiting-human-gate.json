@@ -1,0 +1,61 @@
+{
+  "scenario": "waiting-human-gate",
+  "cli": {
+    "exitCode": 0,
+    "stdout": [
+      "Pipeline: WaitingHumanGate",
+      "Goal: Pause for human approval",
+      "Nodes: 5",
+      "Edges: 5",
+      "Mode: simulation",
+      "---",
+      "---",
+      "Result: waiting",
+      "Completed: start",
+      "Logs: <TMP_ROOT>/logs"
+    ],
+    "stderr": []
+  },
+  "run": {
+    "outcome": {
+      "status": "waiting",
+      "failureReason": ""
+    },
+    "currentNode": "start",
+    "completedNodes": [
+      "start"
+    ],
+    "waitingForQuestionId": "q-0001",
+    "keyContext": {
+      "human.gate.question_id": "q-0001",
+      "outcome": "waiting"
+    },
+    "artifacts": {
+      "nodeStatus": {
+        "start": {
+          "status": "success"
+        }
+      },
+      "managerLoops": {},
+      "questions": {
+        "q-0001.json": {
+          "answerValue": "",
+          "options": [
+            {
+              "key": "A",
+              "label": "[A] Approve"
+            },
+            {
+              "key": "R",
+              "label": "[R] Rework"
+            }
+          ],
+          "stage": "review",
+          "status": "pending",
+          "text": "Review release",
+          "type": "multiple_choice"
+        }
+      }
+    }
+  }
+}

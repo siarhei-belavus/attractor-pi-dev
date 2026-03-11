@@ -1,0 +1,53 @@
+{
+  "scenario": "resume-preferred-label-route",
+  "cli": {
+    "exitCode": 0,
+    "stdout": [
+      "Pipeline: ResumePreferredLabelRoute",
+      "Goal: Resume and follow a preferred label",
+      "Nodes: 5",
+      "Edges: 5",
+      "Mode: simulation",
+      "---",
+      "---",
+      "Result: success",
+      "Completed: start -> chooser -> right -> exit",
+      "Logs: <TMP_ROOT>/logs"
+    ],
+    "stderr": []
+  },
+  "run": {
+    "outcome": {
+      "status": "success",
+      "failureReason": ""
+    },
+    "currentNode": "exit",
+    "completedNodes": [
+      "start",
+      "chooser",
+      "right",
+      "exit"
+    ],
+    "waitingForQuestionId": "",
+    "keyContext": {
+      "last_stage": "right",
+      "outcome": "success"
+    },
+    "artifacts": {
+      "nodeStatus": {
+        "chooser": {
+          "status": "success",
+          "preferredLabel": "Go right"
+        },
+        "right": {
+          "status": "success"
+        },
+        "start": {
+          "status": "success"
+        }
+      },
+      "managerLoops": {},
+      "questions": {}
+    }
+  }
+}

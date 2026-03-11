@@ -21,6 +21,11 @@ import {
   type SessionSnapshot,
 } from "@attractor/backend-pi-dev";
 import { createDebugAgentWriter } from "./debug-agent.js";
+import {
+  createTestInterviewer,
+  createTestManagerObserverFactory,
+  loadCliTestConfig,
+} from "./test-harness.js";
 
 export interface CliDeps {
   createBackend: (options: PiAgentBackendOptions) => CodergenBackend;
@@ -74,6 +79,7 @@ Options (run):
   --simulate         Run in simulation mode (no LLM calls)
   --auto-approve     Auto-approve all human gates
   --logs-dir <path>  Output directory for logs (default: .attractor-runs/<timestamp>)
+  --resume-from <path> Resume from an existing run checkpoint directory
   --provider <name>  LLM provider (default: anthropic)
   --model <id>       LLM model ID (default: claude-sonnet-4-5-20250929)
   --debug-agent      Write redacted agent internals to run logs (system prompt, tools, thread events)
@@ -103,7 +109,13 @@ function getArgValue(args: string[], flag: string): string | undefined {
 
 export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
   // Find DOT file: first positional arg (skip values that follow --flags)
-  const flagsWithValues = new Set(["--logs-dir", "--provider", "--model", "--set"]);
+  const flagsWithValues = new Set([
+    "--logs-dir",
+    "--provider",
+    "--model",
+    "--resume-from",
+    "--set",
+  ]);
   let dotFile: string | undefined;
   for (let i = 0; i < args.length; i++) {
     if (args[i]!.startsWith("--")) {
@@ -119,6 +131,7 @@ export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
   const debugAgent = args.includes("--debug-agent");
 
   const logsDir = getArgValue(args, "--logs-dir");
+  const resumeFromFlag = getArgValue(args, "--resume-from");
   const provider = getArgValue(args, "--provider");
   const model = getArgValue(args, "--model");
 
@@ -174,10 +187,15 @@ export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
 
   // Build runner
   const logsRoot = logsDir ?? path.join(process.cwd(), ".attractor-runs", Date.now().toString());
+  const runId = path.basename(logsRoot);
+  const testConfig = loadCliTestConfig();
   const debugWriter = debugAgent ? createDebugAgentWriter(logsRoot) : null;
-  const interviewer = autoApprove
-    ? new AutoApproveInterviewer()
-    : new ConsoleInterviewer();
+  const interviewer =
+    createTestInterviewer(testConfig, logsRoot, runId) ??
+    (autoApprove ? new AutoApproveInterviewer() : new ConsoleInterviewer());
+  const managerObserverFactory =
+    createTestManagerObserverFactory(testConfig) ?? undefined;
+  const resumeFrom = resumeFromFlag ?? testConfig?.resumeFrom;
 
   let backend: CodergenBackend | null;
   const steeringQueue = new InMemorySteeringQueue();
@@ -207,11 +225,19 @@ export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
       },
     });
   }
+  const backendManagerObserverFactory = backend ? getManagerObserverFactory(backend) : undefined;
 
   const runner = new PipelineRunner({
     backend,
     interviewer,
+    ...(managerObserverFactory
+      ? { managerObserverFactory }
+      : backendManagerObserverFactory
+        ? { managerObserverFactory: backendManagerObserverFactory }
+        : {}),
     logsRoot,
+    ...(resumeFrom ? { resumeFrom } : {}),
+    runId,
     steeringQueue,
     onEvent: (event) => {
       printEvent(event, verbose);

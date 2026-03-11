@@ -1,0 +1,17 @@
+digraph ManagerLoopSuccess {
+  graph [
+    goal="Supervise a child pipeline to completion",
+    stack.child_dotfile="packages/attractor-cli/tests/golden/workflows/manager-loop-success.child.dot"
+  ]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  manager [
+    shape=house,
+    label="Manager",
+    manager.actions="observe,wait",
+    manager.max_cycles="20",
+    manager.poll_interval="1ms"
+  ]
+  start -> manager -> exit
+}
+

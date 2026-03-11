@@ -1,0 +1,56 @@
+{
+  "scenario": "resume-fail-after-resume",
+  "cli": {
+    "exitCode": 1,
+    "stdout": [
+      "Pipeline: ResumeFailAfterResume",
+      "Goal: Resume and route a failed outcome",
+      "Nodes: 5",
+      "Edges: 5",
+      "Mode: simulation",
+      "---",
+      "---",
+      "Result: fail",
+      "Completed: start -> chooser -> fail_branch -> exit",
+      "Logs: <TMP_ROOT>/logs"
+    ],
+    "stderr": [
+      "Failure: No tool_command specified"
+    ]
+  },
+  "run": {
+    "outcome": {
+      "status": "fail",
+      "failureReason": "failed before checkpoint"
+    },
+    "currentNode": "exit",
+    "completedNodes": [
+      "start",
+      "chooser",
+      "fail_branch",
+      "exit"
+    ],
+    "waitingForQuestionId": "",
+    "keyContext": {
+      "last_stage": "chooser",
+      "outcome": "fail"
+    },
+    "artifacts": {
+      "nodeStatus": {
+        "chooser": {
+          "status": "fail",
+          "failureReason": "failed before checkpoint"
+        },
+        "fail_branch": {
+          "status": "fail",
+          "failureReason": "No tool_command specified"
+        },
+        "start": {
+          "status": "success"
+        }
+      },
+      "managerLoops": {},
+      "questions": {}
+    }
+  }
+}

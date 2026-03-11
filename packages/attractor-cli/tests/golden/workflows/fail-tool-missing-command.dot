@@ -1,0 +1,8 @@
+digraph FailToolMissingCommand {
+  graph [goal="Fail when tool configuration is missing"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  work [shape=parallelogram, type="tool", label="Run tool"]
+  start -> work -> exit
+}
+

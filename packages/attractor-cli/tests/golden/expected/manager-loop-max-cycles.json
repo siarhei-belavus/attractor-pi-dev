@@ -1,0 +1,79 @@
+{
+  "scenario": "manager-loop-max-cycles",
+  "cli": {
+    "exitCode": 1,
+    "stdout": [
+      "Pipeline: ManagerLoopMaxCycles",
+      "Goal: Fail when child never reaches a terminal state",
+      "Nodes: 4",
+      "Edges: 3",
+      "Mode: simulation",
+      "---",
+      "---",
+      "Result: fail",
+      "Completed: start -> child -> manager -> exit",
+      "Logs: <TMP_ROOT>/logs"
+    ],
+    "stderr": [
+      "Failure: Max cycles exceeded"
+    ]
+  },
+  "run": {
+    "outcome": {
+      "status": "fail",
+      "failureReason": "Max cycles exceeded"
+    },
+    "currentNode": "exit",
+    "completedNodes": [
+      "start",
+      "child",
+      "manager",
+      "exit"
+    ],
+    "waitingForQuestionId": "",
+    "keyContext": {
+      "last_stage": "child",
+      "outcome": "fail",
+      "stack.manager_loop.artifact_path": "<TMP_ROOT>/logs/manager/manager_loop.json",
+      "stack.manager_loop.child.adapter.execution_id": "child-thread",
+      "stack.manager_loop.child.adapter.node_id": "child",
+      "stack.manager_loop.child.autostart": "false",
+      "stack.manager_loop.child.id": "logs:manager:attached-child",
+      "stack.manager_loop.child.owner_node_id": "manager",
+      "stack.manager_loop.child.run_id": "logs",
+      "stack.manager_loop.child.source": "attached",
+      "stack.manager_loop.current_cycle": 2,
+      "stack.manager_loop.cycle_count": 2,
+      "stack.manager_loop.last_child_lock": "",
+      "stack.manager_loop.last_child_outcome": "",
+      "stack.manager_loop.last_child_status": "running",
+      "stack.manager_loop.lock_decision": "",
+      "stack.manager_loop.max_cycles": 2
+    },
+    "artifacts": {
+      "nodeStatus": {
+        "child": {
+          "status": "success"
+        },
+        "manager": {
+          "status": "fail",
+          "failureReason": "Max cycles exceeded"
+        },
+        "start": {
+          "status": "success"
+        }
+      },
+      "managerLoops": {
+        "manager": {
+          "cycleCount": 2,
+          "finalChildLockDecision": "",
+          "finalChildOutcome": "",
+          "finalChildStatus": "running",
+          "finalFailureReason": "Max cycles exceeded",
+          "finalStatus": "fail"
+        }
+      },
+      "questions": {}
+    }
+  }
+}

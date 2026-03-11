@@ -1,0 +1,27 @@
+{
+  "cliArgs": ["--resume-from", "<TMP_ROOT>/resume"],
+  "files": {
+    "resume/checkpoint.json": {
+      "timestamp": "1970-01-01T00:00:00.000Z",
+      "currentNode": "chooser",
+      "completedNodes": ["start", "chooser"],
+      "nodeOutcomes": {
+        "start": {
+          "status": "success"
+        },
+        "chooser": {
+          "status": "fail",
+          "failureReason": "failed before checkpoint"
+        }
+      },
+      "nodeRetries": {},
+      "context": {
+        "graph.goal": "Resume and route a failed outcome",
+        "outcome": "fail",
+        "last_stage": "chooser"
+      },
+      "logs": []
+    }
+  }
+}
+

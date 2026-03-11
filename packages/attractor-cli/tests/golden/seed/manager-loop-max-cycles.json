@@ -1,0 +1,21 @@
+{
+  "testConfig": {
+    "managerObserver": {
+      "observations": [
+        {
+          "childStatus": "running",
+          "telemetry": {
+            "session_state": "working"
+          }
+        },
+        {
+          "childStatus": "running",
+          "telemetry": {
+            "session_state": "still-working"
+          }
+        }
+      ]
+    }
+  }
+}
+

@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 interface GoldenSeed {
   cliArgs?: string[];
   env?: Record<string, string>;
+  files?: Record<string, string | Record<string, unknown>>;
+  testConfig?: Record<string, unknown>;
 }
 
 export interface GoldenSnapshot {
@@ -47,7 +49,7 @@ let buildPromise: Promise<void> | null = null;
 export function listGoldenScenarios(): string[] {
   return fs
     .readdirSync(workflowsDir)
-    .filter((entry) => entry.endsWith(".dot"))
+    .filter((entry) => entry.endsWith(".dot") && !entry.endsWith(".child.dot"))
     .map((entry) => entry.replace(/\.dot$/u, ""))
     .sort();
 }
@@ -62,6 +64,7 @@ export async function runGoldenScenario(scenario: string): Promise<GoldenSnapsho
   const workflowPath = path.join(workflowsDir, `${scenario}.dot`);
   const seed = loadSeed(scenario);
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), `attractor-golden-${scenario}-`));
+  const materializedSeed = materializeSeed(seed, tempRoot, scenario);
   const logsDir = path.join(tempRoot, "logs");
   const args = [
     cliEntryPoint,
@@ -70,7 +73,7 @@ export async function runGoldenScenario(scenario: string): Promise<GoldenSnapsho
     "--logs-dir",
     logsDir,
     "--simulate",
-    ...(seed.cliArgs ?? []),
+    ...(materializedSeed.cliArgs ?? []),
   ];
 
   try {
@@ -79,7 +82,7 @@ export async function runGoldenScenario(scenario: string): Promise<GoldenSnapsho
       encoding: "utf-8",
       env: {
         ...process.env,
-        ...seed.env,
+        ...materializedSeed.env,
       },
     });
 
@@ -117,6 +120,38 @@ function loadSeed(scenario: string): GoldenSeed {
     return {};
   }
   return JSON.parse(fs.readFileSync(seedPath, "utf-8")) as GoldenSeed;
+}
+
+function materializeSeed(
+  seed: GoldenSeed,
+  tempRoot: string,
+  scenario: string,
+): Required<Pick<GoldenSeed, "cliArgs" | "env">> {
+  if (seed.files) {
+    for (const [relativePath, rawContent] of Object.entries(seed.files)) {
+      const filePath = path.join(tempRoot, relativePath);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      const content = resolvePlaceholders(rawContent, tempRoot, scenario);
+      if (typeof content === "string") {
+        fs.writeFileSync(filePath, content);
+      } else {
+        fs.writeFileSync(filePath, `${JSON.stringify(content, null, 2)}\n`);
+      }
+    }
+  }
+
+  const env = resolvePlaceholders(seed.env ?? {}, tempRoot, scenario) as Record<string, string>;
+  if (seed.testConfig) {
+    const configPath = path.join(tempRoot, "cli-test-config.json");
+    const resolvedConfig = resolvePlaceholders(seed.testConfig, tempRoot, scenario);
+    fs.writeFileSync(configPath, `${JSON.stringify(resolvedConfig, null, 2)}\n`);
+    env.ATTRACTOR_CLI_TEST_CONFIG = configPath;
+  }
+
+  return {
+    cliArgs: resolvePlaceholders(seed.cliArgs ?? [], tempRoot, scenario) as string[],
+    env,
+  };
 }
 
 function normalizeSnapshot(input: {
@@ -253,6 +288,28 @@ function normalizeString(value: string, tempRoot: string, logsDir: string): stri
     .replaceAll(logsDir, "<LOGS_DIR>")
     .replaceAll(workflowsDir, "<WORKFLOWS_DIR>")
     .replaceAll(repoRoot, "<REPO_ROOT>");
+}
+
+function resolvePlaceholders<T>(value: T, tempRoot: string, scenario: string): T {
+  if (typeof value === "string") {
+    return value
+      .replaceAll("<TMP_ROOT>", tempRoot)
+      .replaceAll("<WORKFLOWS_DIR>", workflowsDir)
+      .replaceAll("<REPO_ROOT>", repoRoot)
+      .replaceAll("<SCENARIO>", scenario) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => resolvePlaceholders(item, tempRoot, scenario)) as T;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
+        key,
+        resolvePlaceholders(nested, tempRoot, scenario),
+      ]),
+    ) as T;
+  }
+  return value;
 }
 
 function sortValue(value: unknown): unknown {

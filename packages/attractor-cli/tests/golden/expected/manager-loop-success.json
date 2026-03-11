@@ -1,0 +1,72 @@
+{
+  "scenario": "manager-loop-success",
+  "cli": {
+    "exitCode": 0,
+    "stdout": [
+      "Pipeline: ManagerLoopSuccess",
+      "Goal: Supervise a child pipeline to completion",
+      "Nodes: 3",
+      "Edges: 2",
+      "Mode: simulation",
+      "---",
+      "---",
+      "Result: success",
+      "Completed: start -> manager -> exit",
+      "Logs: <TMP_ROOT>/logs"
+    ],
+    "stderr": []
+  },
+  "run": {
+    "outcome": {
+      "status": "success",
+      "failureReason": ""
+    },
+    "currentNode": "exit",
+    "completedNodes": [
+      "start",
+      "manager",
+      "exit"
+    ],
+    "waitingForQuestionId": "",
+    "keyContext": {
+      "outcome": "success",
+      "stack.manager_loop.artifact_path": "<TMP_ROOT>/logs/manager/manager_loop.json",
+      "stack.manager_loop.child.adapter.execution_id": "default",
+      "stack.manager_loop.child.adapter.node_id": "start",
+      "stack.manager_loop.child.autostart": "true",
+      "stack.manager_loop.child.dotfile": "<WORKFLOWS_DIR>/manager-loop-success.child.dot",
+      "stack.manager_loop.child.id": "logs:manager:child",
+      "stack.manager_loop.child.owner_node_id": "manager",
+      "stack.manager_loop.child.run_id": "logs:manager:child-run",
+      "stack.manager_loop.child.source": "dotfile",
+      "stack.manager_loop.current_cycle": 2,
+      "stack.manager_loop.cycle_count": 2,
+      "stack.manager_loop.last_child_lock": "",
+      "stack.manager_loop.last_child_outcome": "success",
+      "stack.manager_loop.last_child_status": "completed",
+      "stack.manager_loop.lock_decision": "",
+      "stack.manager_loop.max_cycles": 20
+    },
+    "artifacts": {
+      "nodeStatus": {
+        "manager": {
+          "status": "success"
+        },
+        "start": {
+          "status": "success"
+        }
+      },
+      "managerLoops": {
+        "manager": {
+          "cycleCount": 2,
+          "finalChildLockDecision": "",
+          "finalChildOutcome": "success",
+          "finalChildStatus": "completed",
+          "finalFailureReason": "",
+          "finalStatus": "success"
+        }
+      },
+      "questions": {}
+    }
+  }
+}

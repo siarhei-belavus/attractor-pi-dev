@@ -1,0 +1,15 @@
+digraph ManagerLoopMaxCycles {
+  graph [goal="Fail when child never reaches a terminal state"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  child [label="Child", prompt="Do the child work", thread_id="child-thread"]
+  manager [
+    shape=house,
+    label="Manager",
+    manager.actions="observe,wait",
+    manager.max_cycles="2",
+    manager.poll_interval="1ms"
+  ]
+  start -> child -> manager -> exit
+}
+

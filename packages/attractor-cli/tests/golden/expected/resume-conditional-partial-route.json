@@ -1,0 +1,52 @@
+{
+  "scenario": "resume-conditional-partial-route",
+  "cli": {
+    "exitCode": 0,
+    "stdout": [
+      "Pipeline: ResumeConditionalPartialRoute",
+      "Goal: Resume and route a partial outcome",
+      "Nodes: 5",
+      "Edges: 5",
+      "Mode: simulation",
+      "---",
+      "---",
+      "Result: success",
+      "Completed: start -> chooser -> recover -> exit",
+      "Logs: <TMP_ROOT>/logs"
+    ],
+    "stderr": []
+  },
+  "run": {
+    "outcome": {
+      "status": "success",
+      "failureReason": ""
+    },
+    "currentNode": "exit",
+    "completedNodes": [
+      "start",
+      "chooser",
+      "recover",
+      "exit"
+    ],
+    "waitingForQuestionId": "",
+    "keyContext": {
+      "last_stage": "recover",
+      "outcome": "success"
+    },
+    "artifacts": {
+      "nodeStatus": {
+        "chooser": {
+          "status": "partial_success"
+        },
+        "recover": {
+          "status": "success"
+        },
+        "start": {
+          "status": "success"
+        }
+      },
+      "managerLoops": {},
+      "questions": {}
+    }
+  }
+}

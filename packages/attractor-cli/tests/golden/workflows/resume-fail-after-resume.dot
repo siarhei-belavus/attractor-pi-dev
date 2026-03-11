@@ -1,0 +1,14 @@
+digraph ResumeFailAfterResume {
+  graph [goal="Resume and route a failed outcome"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  chooser [shape=diamond, label="Pick route"]
+  success_branch [label="Ship", prompt="Ship the work"]
+  fail_branch [shape=parallelogram, type="tool", label="Fail route"]
+  start -> chooser
+  chooser -> success_branch [label="Ship", condition="outcome=success"]
+  chooser -> fail_branch [label="Fail", condition="outcome=fail"]
+  success_branch -> exit
+  fail_branch -> exit
+}
+

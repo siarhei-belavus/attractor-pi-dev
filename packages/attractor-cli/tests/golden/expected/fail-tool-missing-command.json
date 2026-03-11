@@ -1,0 +1,50 @@
+{
+  "scenario": "fail-tool-missing-command",
+  "cli": {
+    "exitCode": 1,
+    "stdout": [
+      "Pipeline: FailToolMissingCommand",
+      "Goal: Fail when tool configuration is missing",
+      "Nodes: 3",
+      "Edges: 2",
+      "Mode: simulation",
+      "---",
+      "---",
+      "Result: fail",
+      "Completed: start -> work -> exit",
+      "Logs: <TMP_ROOT>/logs"
+    ],
+    "stderr": [
+      "Failure: No tool_command specified"
+    ]
+  },
+  "run": {
+    "outcome": {
+      "status": "fail",
+      "failureReason": "No tool_command specified"
+    },
+    "currentNode": "exit",
+    "completedNodes": [
+      "start",
+      "work",
+      "exit"
+    ],
+    "waitingForQuestionId": "",
+    "keyContext": {
+      "outcome": "fail"
+    },
+    "artifacts": {
+      "nodeStatus": {
+        "start": {
+          "status": "success"
+        },
+        "work": {
+          "status": "fail",
+          "failureReason": "No tool_command specified"
+        }
+      },
+      "managerLoops": {},
+      "questions": {}
+    }
+  }
+}

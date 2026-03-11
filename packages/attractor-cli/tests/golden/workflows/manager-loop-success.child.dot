@@ -1,0 +1,8 @@
+digraph ManagerLoopSuccessChild {
+  graph [goal="Finish child work"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  child_work [label="Child work", prompt="Finish the child task"]
+  start -> child_work -> exit
+}
+

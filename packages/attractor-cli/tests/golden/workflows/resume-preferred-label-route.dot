@@ -1,0 +1,14 @@
+digraph ResumePreferredLabelRoute {
+  graph [goal="Resume and follow a preferred label"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  chooser [label="Choose route", prompt="Choose a route"]
+  left [label="Left", prompt="Go left"]
+  right [label="Right", prompt="Go right"]
+  start -> chooser
+  chooser -> left [label="Go left"]
+  chooser -> right [label="Go right"]
+  left -> exit
+  right -> exit
+}
+

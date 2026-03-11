@@ -1,0 +1,9 @@
+{
+  "testConfig": {
+    "interviewer": {
+      "mode": "wait_once",
+      "questionId": "q-0001"
+    }
+  }
+}
+
