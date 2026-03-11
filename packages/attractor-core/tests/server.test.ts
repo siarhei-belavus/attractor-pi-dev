@@ -618,12 +618,27 @@ describe("HTTP Server: POST /pipelines/{id}/steer", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.data.delivery).toBe("queued");
-    expect(steeringQueue.peek({ runId, executionId: "child-thread" })).toMatchObject([
+    expect(steeringQueue.peek({ runId, executionId: "child-thread", nodeId: "child" })).toMatchObject([
       {
         message: "Focus on the failing test first.",
         source: "api",
       },
     ]);
+  });
+
+  it("returns 409 when no active manager target is known yet", async () => {
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: HUMAN_GATE_DOT,
+    });
+    const runId = runData.runId as string;
+
+    await waitForStatus(runId, ["waiting_for_answer"]);
+    const response = await request("POST", `/pipelines/${runId}/steer`, {
+      message: "Hello",
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.data.error).toContain("active manager steering target");
   });
 
   it("returns 409 when no active manager-loop-bound child session exists", async () => {

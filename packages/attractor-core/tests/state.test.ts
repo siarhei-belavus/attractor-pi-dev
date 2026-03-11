@@ -2,11 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { preparePipeline } from "../src/engine/pipeline.js";
+import { PipelineRunner } from "../src/engine/runner.js";
 import { Context } from "../src/state/context.js";
 import { Checkpoint } from "../src/state/checkpoint.js";
 import { ArtifactStore } from "../src/state/artifact-store.js";
 import { StageStatus } from "../src/state/types.js";
 import { InMemorySteeringQueue, createSteeringMessage } from "../src/steering/queue.js";
+import { QueueInterviewer } from "../src/handlers/interviewers.js";
+import { AnswerValue } from "../src/handlers/types.js";
 
 describe("Context", () => {
   it("set and get values", () => {
@@ -125,7 +129,7 @@ describe("Checkpoint", () => {
     expect(() => Checkpoint.load(tmpDir)).toThrow(/Failed to load checkpoint JSON/);
   });
 
-  it("does not persist queued steering in checkpoint state", () => {
+  it("does not persist queued steering in the real checkpoint path", async () => {
     const queue = new InMemorySteeringQueue();
     queue.enqueue(
       createSteeringMessage({
@@ -135,13 +139,26 @@ describe("Checkpoint", () => {
       }),
     );
 
-    new Checkpoint({
-      currentNode: "plan",
-      completedNodes: ["start"],
-      nodeOutcomes: { start: { status: StageStatus.SUCCESS } },
-      context: { "graph.goal": "Test" },
-      nodeRetries: {},
-    }).save(tmpDir);
+    const { graph } = preparePipeline(`
+      digraph CheckpointQueueIsolation {
+        graph [goal="Persist checkpoint without steering"]
+        start [shape=Mdiamond]
+        exit [shape=Msquare]
+        review [shape=hexagon, label="Review"]
+        start -> review
+        review -> exit [label="[A] Approve"]
+      }
+    `);
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      runId: "run-1",
+      steeringQueue: queue,
+      interviewer: new QueueInterviewer([{ value: AnswerValue.WAITING, questionId: "q-1" }]),
+    });
+
+    const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.WAITING);
 
     const saved = JSON.parse(
       fs.readFileSync(path.join(tmpDir, "checkpoint.json"), "utf-8"),

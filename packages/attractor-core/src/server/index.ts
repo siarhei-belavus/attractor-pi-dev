@@ -21,7 +21,6 @@ import { RunStateStore } from "./run-state.js";
 import type { RunStatus } from "./run-state.js";
 import {
   createSteeringMessage,
-  getRunScopedSteeringTarget,
   InMemorySteeringQueue,
   type SteeringQueue,
   type SteeringTarget,
@@ -227,10 +226,13 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
                 input.context.getString("internal.last_completed_execution_id") || "";
               const branchKey =
                 input.context.getString("internal.last_completed_branch_key") || "";
+              const nodeId =
+                input.context.getString("internal.last_completed_node_id") || "";
               run.activeManagerTarget = {
                 runId: run.runId,
                 ...(executionId ? { executionId } : {}),
                 ...(branchKey ? { branchKey } : {}),
+                ...(nodeId ? { nodeId } : {}),
               };
               return serverConfig.managerObserverFactory!(input);
             },
@@ -601,7 +603,12 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       sendError(res, 409, `Pipeline is already ${run.status}`);
       return;
     }
-    const target = run.activeManagerTarget ?? getRunScopedSteeringTarget(runId);
+    if (!run.activeManagerTarget) {
+      sendError(res, 409, "Run has no active manager steering target");
+      return;
+    }
+
+    const target = run.activeManagerTarget;
     steeringQueue.enqueue(
       createSteeringMessage({
         target,

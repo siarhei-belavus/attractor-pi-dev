@@ -415,10 +415,12 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     }
 
     const branchKey = context.getString("internal.current_branch_key");
+    const nodeId = context.getString("internal.current_node_id");
     return {
       runId,
       executionId,
       ...(branchKey ? { branchKey } : {}),
+      ...(nodeId ? { nodeId } : {}),
     };
   }
 }
@@ -438,10 +440,12 @@ class PiManagerObserver implements ManagerObserver {
     }
     this.executionId = executionId;
     const branchKey = input.context.getString("internal.last_completed_branch_key");
+    const nodeId = input.context.getString("internal.last_completed_node_id");
     this.target = {
       runId,
       executionId,
       ...(branchKey ? { branchKey } : {}),
+      ...(nodeId ? { nodeId } : {}),
     };
   }
 
