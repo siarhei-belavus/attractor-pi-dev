@@ -1920,6 +1920,279 @@ describe("Integration: Retry on failure (spec §4.5 / 11.12)", () => {
     expect(result.outcome.status).toBe(StageStatus.FAIL);
     expect(attempts).toBe(3); // 1 initial + 2 retries, all exhausted
   });
+
+  it("keeps explicit fail-edge routing ahead of retry_target recovery", async () => {
+    const { graph } = preparePipeline(`
+      digraph FailEdgeWins {
+        graph [goal="Prefer fail edge"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        broken [type="always_fail", prompt="Always fail", retry_target="retry_path"]
+        fail_path [type="track_path", prompt="Fail path"]
+        retry_path [type="track_path", prompt="Retry path"]
+        start -> broken
+        broken -> fail_path [condition="outcome=fail"]
+        broken -> retry_path [condition="outcome=success"]
+        fail_path -> exit
+        retry_path -> exit
+      }
+    `);
+
+    const executed: string[] = [];
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+
+    runner.registerHandler("always_fail", {
+      async execute() {
+        return { status: StageStatus.FAIL, failureReason: "boom" };
+      },
+    });
+
+    runner.registerHandler("track_path", {
+      async execute(node) {
+        executed.push(node.id);
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(executed).toEqual(["fail_path"]);
+    expect(result.completedNodes).not.toContain("retry_path");
+  });
+
+  it("routes node failures to node.retry_target when no fail-edge matches", async () => {
+    const { graph } = preparePipeline(`
+      digraph NodeRetryTarget {
+        graph [goal="Node retry target"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        broken [type="always_fail", prompt="Always fail", retry_target="retry_path"]
+        retry_path [type="track_path", prompt="Retry path"]
+        start -> broken
+        broken -> retry_path [condition="outcome=success"]
+        retry_path -> exit
+      }
+    `);
+
+    const executed: string[] = [];
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+
+    runner.registerHandler("always_fail", {
+      async execute() {
+        return { status: StageStatus.FAIL, failureReason: "boom" };
+      },
+    });
+
+    runner.registerHandler("track_path", {
+      async execute(node) {
+        executed.push(node.id);
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(executed).toEqual(["retry_path"]);
+  });
+
+  it("falls back to node.fallback_retry_target when node.retry_target is invalid", async () => {
+    const { graph } = preparePipeline(`
+      digraph NodeFallbackRetryTarget {
+        graph [goal="Node fallback retry target"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        broken [
+          type="always_fail",
+          prompt="Always fail",
+          retry_target="missing_node",
+          fallback_retry_target="retry_path"
+        ]
+        retry_path [type="track_path", prompt="Retry path"]
+        start -> broken
+        broken -> retry_path [condition="outcome=success"]
+        retry_path -> exit
+      }
+    `);
+
+    const executed: string[] = [];
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+
+    runner.registerHandler("always_fail", {
+      async execute() {
+        return { status: StageStatus.FAIL, failureReason: "boom" };
+      },
+    });
+
+    runner.registerHandler("track_path", {
+      async execute(node) {
+        executed.push(node.id);
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(executed).toEqual(["retry_path"]);
+  });
+
+  it("falls back to graph.retry_target when node-level targets are absent", async () => {
+    const { graph } = preparePipeline(`
+      digraph GraphRetryTarget {
+        graph [goal="Graph retry target", retry_target="graph_retry"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        broken [type="always_fail", prompt="Always fail"]
+        graph_retry [type="track_path", prompt="Graph retry path"]
+        start -> broken
+        broken -> graph_retry [condition="outcome=success"]
+        graph_retry -> exit
+      }
+    `);
+
+    const executed: string[] = [];
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+
+    runner.registerHandler("always_fail", {
+      async execute() {
+        return { status: StageStatus.FAIL, failureReason: "boom" };
+      },
+    });
+
+    runner.registerHandler("track_path", {
+      async execute(node) {
+        executed.push(node.id);
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(executed).toEqual(["graph_retry"]);
+  });
+
+  it("falls back to graph.fallback_retry_target when graph.retry_target is invalid", async () => {
+    const { graph } = preparePipeline(`
+      digraph GraphFallbackRetryTarget {
+        graph [
+          goal="Graph fallback retry target",
+          retry_target="missing_node",
+          fallback_retry_target="graph_fallback"
+        ]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        broken [type="always_fail", prompt="Always fail"]
+        graph_fallback [type="track_path", prompt="Graph fallback path"]
+        start -> broken
+        broken -> graph_fallback [condition="outcome=success"]
+        graph_fallback -> exit
+      }
+    `);
+
+    const executed: string[] = [];
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+
+    runner.registerHandler("always_fail", {
+      async execute() {
+        return { status: StageStatus.FAIL, failureReason: "boom" };
+      },
+    });
+
+    runner.registerHandler("track_path", {
+      async execute(node) {
+        executed.push(node.id);
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(executed).toEqual(["graph_fallback"]);
+  });
+
+  it("keeps terminal failure when no fail-edge or retry target exists", async () => {
+    const { graph } = preparePipeline(`
+      digraph NoRecoveryTarget {
+        graph [goal="No recovery target"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        broken [type="always_fail", prompt="Always fail"]
+        start -> broken [condition="outcome=success"]
+        start -> exit [condition="outcome=fail"]
+      }
+    `);
+
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+
+    runner.registerHandler("always_fail", {
+      async execute() {
+        return { status: StageStatus.FAIL, failureReason: "boom" };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.FAIL);
+    expect(result.outcome.failureReason).toBe("Stage failed with no outgoing fail edge");
+  });
+
+  it("resumes failure recovery through retry_target after a checkpoint", async () => {
+    const DOT = `
+      digraph ResumeRetryTarget {
+        graph [goal="Resume retry target"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        broken [type="always_fail", prompt="Always fail", retry_target="retry_path"]
+        retry_path [type="track_path", prompt="Retry path"]
+        start -> broken
+        broken -> retry_path [condition="outcome=success"]
+        retry_path -> exit
+      }
+    `;
+    const { graph } = preparePipeline(DOT);
+
+    const checkpointDir = fs.mkdtempSync(path.join(os.tmpdir(), "resume-retry-target-"));
+    new Checkpoint({
+      currentNode: "broken",
+      completedNodes: ["start", "broken"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        broken: { status: StageStatus.FAIL, failureReason: "boom" },
+      },
+      context: { "graph.goal": "Resume retry target", outcome: "fail" },
+      nodeRetries: {},
+    }).save(checkpointDir);
+
+    const executed: string[] = [];
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      resumeFrom: checkpointDir,
+    });
+
+    runner.registerHandler("always_fail", {
+      async execute() {
+        return { status: StageStatus.FAIL, failureReason: "boom" };
+      },
+    });
+
+    runner.registerHandler("track_path", {
+      async execute(node) {
+        executed.push(node.id);
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(executed).toEqual(["retry_path"]);
+
+    fs.rmSync(checkpointDir, { recursive: true, force: true });
+  });
 });
 
 describe("Integration: Stylesheet model override (spec §8 / 11.12)", () => {

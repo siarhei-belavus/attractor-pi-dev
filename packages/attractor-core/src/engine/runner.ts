@@ -302,13 +302,11 @@ export class PipelineRunner {
             );
           }
 
-          // Select the next edge from the last completed node using the checkpoint context
-          const outgoing = graph.outgoingEdges(lastCompletedId);
-          const nextEdge = selectEdge(outgoing, lastCompletedOutcome, context);
+          const nextStep = this.resolveNextStep(lastNode, lastCompletedOutcome, graph, context);
 
-          if (nextEdge) {
-            currentNode = graph.getNode(nextEdge.toNode);
-            incomingEdge = nextEdge;
+          if (nextStep) {
+            currentNode = graph.getNode(nextStep.toNode);
+            incomingEdge = nextStep.edge;
             previousNodeId = lastCompletedId;
             lastOutcome = lastCompletedOutcome;
 
@@ -533,10 +531,9 @@ export class PipelineRunner {
       });
 
       // Step 6: Select next edge
-      const outgoing = graph.outgoingEdges(node.id);
-      const nextEdge = selectEdge(outgoing, outcome, context);
+      const nextStep = this.resolveNextStep(node, outcome, graph, context);
 
-      if (!nextEdge) {
+      if (!nextStep) {
         if (outcome.status === StageStatus.FAIL) {
           lastOutcome = failOutcome("Stage failed with no outgoing fail edge");
         }
@@ -545,7 +542,7 @@ export class PipelineRunner {
 
       // Step 7: Handle loop_restart — reset retry counters so the
       //         target node (and downstream nodes) execute as a fresh loop iteration.
-      if (nextEdge.loopRestart) {
+      if (nextStep.edge?.loopRestart) {
         // Clear all internal retry counters stored in context
         const snapshot = context.snapshot();
         for (const key of Object.keys(snapshot)) {
@@ -556,7 +553,7 @@ export class PipelineRunner {
 
         // Remove the target node (and any nodes it can reach) from
         // nodeOutcomes so goal-gate checks see them as unvisited.
-        const reachable = graph.reachableFrom(nextEdge.toNode);
+        const reachable = graph.reachableFrom(nextStep.toNode);
         for (const nodeId of reachable) {
           nodeOutcomes.delete(nodeId);
         }
@@ -564,15 +561,15 @@ export class PipelineRunner {
         this.emitter.emit({
           type: "loop_restarted",
           fromNode: node.id,
-          toNode: nextEdge.toNode,
+          toNode: nextStep.toNode,
           timestamp: new Date().toISOString(),
         });
       }
 
       // Step 8: Advance to next node, tracking incoming edge for fidelity/thread resolution
       previousNodeId = node.id;
-      incomingEdge = nextEdge;
-      currentNode = graph.getNode(nextEdge.toNode);
+      incomingEdge = nextStep.edge;
+      currentNode = graph.getNode(nextStep.toNode);
     }
 
     const totalDuration = Date.now() - startTime;
@@ -707,6 +704,30 @@ export class PipelineRunner {
       return graph.attrs.fallbackRetryTarget;
     }
     return null;
+  }
+
+  private resolveNextStep(
+    node: GraphNode,
+    outcome: Outcome,
+    graph: Graph,
+    context: Context,
+  ): { toNode: string; edge: GraphEdge | null } | null {
+    const outgoing = graph.outgoingEdges(node.id);
+    const nextEdge = selectEdge(outgoing, outcome, context);
+    if (nextEdge) {
+      return { toNode: nextEdge.toNode, edge: nextEdge };
+    }
+
+    if (outcome.status !== StageStatus.FAIL) {
+      return null;
+    }
+
+    const retryTarget = this.getRetryTarget(node, graph);
+    if (!retryTarget) {
+      return null;
+    }
+
+    return { toNode: retryTarget, edge: null };
   }
 
   /** Get the event emitter for subscribing to events */
