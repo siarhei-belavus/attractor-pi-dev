@@ -141,4 +141,98 @@ describe("Pi manager observer integration", () => {
 
     expect(steerSpy).toHaveBeenCalledWith("Keep going");
   });
+
+  it("delivers manager-originated queued steering during the observe cycle", async () => {
+    const steeringQueue = new InMemorySteeringQueue();
+    const backend = new PiAgentCodergenBackend({
+      reuseSessions: true,
+      steeringQueue,
+    }) as any;
+    const calls: string[] = [];
+
+    backend.sessions.set("child-thread", {
+      steer: vi.fn((message: string) => {
+        calls.push(`steer:${message}`);
+      }),
+      getRuntimeSnapshot: () => {
+        calls.push("snapshot");
+        return {
+          state: SessionState.AWAITING_INPUT,
+          awaitingInput: true,
+          lastAssistantText: "Need clarification?",
+          messageCount: 4,
+          activeTools: ["read", "edit"],
+          toolPolicyDiagnostics: ["diag"],
+          turnCount: 2,
+          toolRoundCount: 3,
+          lastActivityAt: 123,
+          terminalOutcome: null,
+          failureReason: null,
+        };
+      },
+    });
+    backend.sessionMetadata.set("child-thread", {
+      provider: "anthropic",
+      modelId: "claude-test",
+    });
+
+    steeringQueue.enqueue(
+      createSteeringMessage({
+        target: {
+          runId: "run-1",
+          executionId: "child-thread",
+          nodeId: "child",
+        },
+        message: "Focus on the failing test first",
+        source: "manager",
+      }),
+    );
+
+    const factory = backend.createManagerObserverFactory();
+    const observer = await factory({
+      node: {
+        id: "manager",
+        label: "Manager",
+        shape: "house",
+        type: "stack.manager_loop",
+        prompt: "",
+        maxRetries: 0,
+        goalGate: false,
+        retryTarget: "",
+        fallbackRetryTarget: "",
+        fidelity: "",
+        threadId: "",
+        classes: [],
+        timeout: null,
+        llmModel: "",
+        llmProvider: "",
+        reasoningEffort: "",
+        autoStatus: false,
+        allowPartial: false,
+        attrs: {},
+      },
+      context: Context.fromSnapshot({
+        "internal.run_id": "run-1",
+        "internal.last_completed_execution_id": "child-thread",
+        "internal.last_completed_node_id": "child",
+      }),
+      graph: {} as any,
+      logsRoot: "/tmp",
+      steeringQueue,
+    });
+
+    await observer!.observe(new Context());
+
+    expect(calls).toEqual([
+      "steer:Focus on the failing test first",
+      "snapshot",
+    ]);
+    expect(
+      steeringQueue.peek({
+        runId: "run-1",
+        executionId: "child-thread",
+        nodeId: "child",
+      }),
+    ).toEqual([]);
+  });
 });
