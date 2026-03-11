@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   InMemorySteeringQueue,
   createSteeringMessage,
+  getActiveManagerTarget,
 } from "../src/steering/queue.js";
+import { Context } from "../src/state/context.js";
 
 describe("InMemorySteeringQueue", () => {
   it("enqueues and drains matching targets once", () => {
@@ -53,5 +55,20 @@ describe("InMemorySteeringQueue", () => {
 
     expect(firstQueue.peek({ runId: "run-1" })).toHaveLength(1);
     expect(secondQueue.peek({ runId: "run-1" })).toEqual([]);
+  });
+
+  it("builds the active manager target from last-completed execution context", () => {
+    const context = Context.fromSnapshot({
+      "internal.last_completed_execution_id": "exec-1",
+      "internal.last_completed_branch_key": "branch-a",
+      "internal.last_completed_node_id": "child",
+    });
+
+    expect(getActiveManagerTarget("run-1", context)).toEqual({
+      runId: "run-1",
+      executionId: "exec-1",
+      branchKey: "branch-a",
+      nodeId: "child",
+    });
   });
 });

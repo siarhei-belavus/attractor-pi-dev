@@ -17,7 +17,11 @@ import type {
   SteeringQueue,
   SteeringTarget,
 } from "@attractor/core";
-import { StageStatus } from "@attractor/core";
+import {
+  StageStatus,
+  getCurrentSteeringTarget,
+  getLastCompletedSteeringTarget,
+} from "@attractor/core";
 import {
   Session,
   SessionState,
@@ -201,7 +205,7 @@ export class PiAgentCodergenBackend implements CodergenBackend {
       };
     }
 
-    this.consumeQueuedSteering(this.resolveTargetFromContext(context), session);
+    this.deliverSteeringMessages(this.resolveConsumerTarget(context), session);
     this.emitSessionSnapshot("before_submit", session, threadKey, provider, modelId);
 
     // Send prompt and wait for completion
@@ -389,6 +393,13 @@ export class PiAgentCodergenBackend implements CodergenBackend {
   }
 
   consumeQueuedSteering(target: SteeringTarget | null, sessionOverride?: { steer: (message: string) => void }): string[] {
+    return this.deliverSteeringMessages(target, sessionOverride);
+  }
+
+  private deliverSteeringMessages(
+    target: SteeringTarget | null,
+    sessionOverride?: { steer: (message: string) => void },
+  ): string[] {
     if (!target || !this.options.steeringQueue) {
       return [];
     }
@@ -407,21 +418,8 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     return messages.map((message) => message.message);
   }
 
-  private resolveTargetFromContext(context: Context): SteeringTarget | null {
-    const runId = context.getString("internal.run_id");
-    const executionId = context.getString("internal.current_execution_id");
-    if (!runId || !executionId) {
-      return null;
-    }
-
-    const branchKey = context.getString("internal.current_branch_key");
-    const nodeId = context.getString("internal.current_node_id");
-    return {
-      runId,
-      executionId,
-      ...(branchKey ? { branchKey } : {}),
-      ...(nodeId ? { nodeId } : {}),
-    };
+  private resolveConsumerTarget(context: Context): SteeringTarget | null {
+    return getCurrentSteeringTarget(context);
   }
 }
 
@@ -433,20 +431,12 @@ class PiManagerObserver implements ManagerObserver {
     private readonly backend: PiAgentCodergenBackend,
     input: ManagerObserverFactoryInput,
   ) {
-    const runId = input.context.getString("internal.run_id");
-    const executionId = input.context.getString("internal.last_completed_execution_id");
-    if (!runId || !executionId) {
+    const target = getLastCompletedSteeringTarget(input.context);
+    if (!target?.executionId) {
       throw new Error("Manager loop child execution target is missing");
     }
-    this.executionId = executionId;
-    const branchKey = input.context.getString("internal.last_completed_branch_key");
-    const nodeId = input.context.getString("internal.last_completed_node_id");
-    this.target = {
-      runId,
-      executionId,
-      ...(branchKey ? { branchKey } : {}),
-      ...(nodeId ? { nodeId } : {}),
-    };
+    this.executionId = target.executionId;
+    this.target = target;
   }
 
   async observe(_context: Context): Promise<ObserveResult> {

@@ -61,6 +61,18 @@ export class InMemorySteeringQueue implements SteeringQueue {
   }
 }
 
+/**
+ * Steering target matching is intentionally exact for every field present on the message:
+ * - `runId` is always required and always matched exactly.
+ * - If a message includes `executionId`, `branchKey`, or `nodeId`, the consumer must present
+ *   the same value for that field to drain it.
+ * - If a field is absent on the message, it does not participate in matching.
+ *
+ * This means "broadcast" is only possible when a producer deliberately omits narrower fields.
+ * In this first pass, producers are expected to target specific executions rather than rely on
+ * implicit run-wide broadcast. `nodeId` participates so a message aimed at one execution stage
+ * does not get consumed by a different stage reusing the same execution scope.
+ */
 export function matchesSteeringTarget(
   messageTarget: SteeringTarget,
   consumerTarget: SteeringTarget,
@@ -86,8 +98,24 @@ export function matchesSteeringTarget(
   return true;
 }
 
+export function createSteeringTarget(
+  runId: string,
+  opts: {
+    executionId?: string;
+    branchKey?: string;
+    nodeId?: string;
+  } = {},
+): SteeringTarget {
+  return {
+    runId,
+    ...(opts.executionId ? { executionId: opts.executionId } : {}),
+    ...(opts.branchKey ? { branchKey: opts.branchKey } : {}),
+    ...(opts.nodeId ? { nodeId: opts.nodeId } : {}),
+  };
+}
+
 export function getRunScopedSteeringTarget(runId: string): SteeringTarget {
-  return { runId };
+  return createSteeringTarget(runId);
 }
 
 export function getCurrentSteeringTarget(context: Context): SteeringTarget | null {
@@ -96,21 +124,14 @@ export function getCurrentSteeringTarget(context: Context): SteeringTarget | nul
     return null;
   }
 
-  const target: SteeringTarget = { runId };
   const executionId = context.getString("internal.current_execution_id");
   const branchKey = context.getString("internal.current_branch_key");
   const nodeId = context.getString("internal.current_node_id");
-
-  if (executionId) {
-    target.executionId = executionId;
-  }
-  if (branchKey) {
-    target.branchKey = branchKey;
-  }
-  if (nodeId) {
-    target.nodeId = nodeId;
-  }
-  return target;
+  return createSteeringTarget(runId, {
+    executionId,
+    branchKey,
+    nodeId,
+  });
 }
 
 export function getLastCompletedSteeringTarget(context: Context): SteeringTarget | null {
@@ -119,19 +140,25 @@ export function getLastCompletedSteeringTarget(context: Context): SteeringTarget
     return null;
   }
 
-  const target: SteeringTarget = { runId };
   const executionId = context.getString("internal.last_completed_execution_id");
   const branchKey = context.getString("internal.last_completed_branch_key");
   const nodeId = context.getString("internal.last_completed_node_id");
+  return createSteeringTarget(runId, {
+    executionId,
+    branchKey,
+    nodeId,
+  });
+}
 
-  if (executionId) {
-    target.executionId = executionId;
+export function getActiveManagerTarget(runId: string, context: Context): SteeringTarget | null {
+  const executionId = context.getString("internal.last_completed_execution_id");
+  if (!executionId) {
+    return null;
   }
-  if (branchKey) {
-    target.branchKey = branchKey;
-  }
-  if (nodeId) {
-    target.nodeId = nodeId;
-  }
-  return target;
+
+  return createSteeringTarget(runId, {
+    executionId,
+    branchKey: context.getString("internal.last_completed_branch_key"),
+    nodeId: context.getString("internal.last_completed_node_id"),
+  });
 }

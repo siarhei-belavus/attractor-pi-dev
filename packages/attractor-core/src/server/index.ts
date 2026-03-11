@@ -21,6 +21,7 @@ import { RunStateStore } from "./run-state.js";
 import type { RunStatus } from "./run-state.js";
 import {
   createSteeringMessage,
+  getActiveManagerTarget,
   InMemorySteeringQueue,
   type SteeringQueue,
   type SteeringTarget,
@@ -222,18 +223,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       ...(serverConfig.managerObserverFactory
         ? {
             managerObserverFactory: async (input) => {
-              const executionId =
-                input.context.getString("internal.last_completed_execution_id") || "";
-              const branchKey =
-                input.context.getString("internal.last_completed_branch_key") || "";
-              const nodeId =
-                input.context.getString("internal.last_completed_node_id") || "";
-              run.activeManagerTarget = {
-                runId: run.runId,
-                ...(executionId ? { executionId } : {}),
-                ...(branchKey ? { branchKey } : {}),
-                ...(nodeId ? { nodeId } : {}),
-              };
+              run.activeManagerTarget = getActiveManagerTarget(run.runId, input.context);
               return serverConfig.managerObserverFactory!(input);
             },
           }
