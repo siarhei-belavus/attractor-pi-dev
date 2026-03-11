@@ -1344,6 +1344,55 @@ describe("Integration: Checkpoint Resume", () => {
     fs.rmSync(partialCpDir, { recursive: true, force: true });
   });
 
+  it("fails resumed exit when a declared goal_gate has no outcome", async () => {
+    const DOT = `
+      digraph ResumeMissingGoalGate {
+        graph [goal="Resume into exit with skipped goal gate"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        chooser [shape=diamond]
+        happy_path [prompt="Happy path"]
+        must_run [prompt="Required work", goal_gate=true]
+        start -> chooser
+        chooser -> happy_path [weight=10]
+        chooser -> must_run [weight=5]
+        happy_path -> exit
+        must_run -> exit
+      }
+    `;
+    const { graph } = preparePipeline(DOT);
+
+    const checkpointDir = fs.mkdtempSync(path.join(os.tmpdir(), "goal-gate-missing-resume-"));
+    new Checkpoint({
+      currentNode: "happy_path",
+      completedNodes: ["start", "chooser", "happy_path"],
+      nodeOutcomes: {
+        start: { status: StageStatus.SUCCESS },
+        chooser: { status: StageStatus.SUCCESS },
+        happy_path: { status: StageStatus.SUCCESS },
+      },
+      context: {
+        "graph.goal": "Resume into exit with skipped goal gate",
+        outcome: "success",
+        last_stage: "happy_path",
+      },
+      nodeRetries: {},
+    }).save(checkpointDir);
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      resumeFrom: checkpointDir,
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.FAIL);
+    expect(result.outcome.failureReason).toBe("Goal gate unsatisfied and no retry target");
+    expect(result.completedNodes).toEqual(["start", "chooser", "happy_path"]);
+
+    fs.rmSync(checkpointDir, { recursive: true, force: true });
+  });
+
   it("preserves preferredLabel-based routing after resume", async () => {
     const DOT = `
       digraph PreferredLabelResume {
