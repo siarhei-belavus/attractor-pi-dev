@@ -1,6 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Graph, GraphEdge, GraphNode } from "../model/graph.js";
+import type {
+  AttachedExecutionSupervisor,
+  CapableBackend,
+} from "../backend/contracts.js";
 import { Context } from "../state/context.js";
 import { Checkpoint } from "../state/checkpoint.js";
 import type { Outcome } from "../state/types.js";
@@ -86,10 +90,19 @@ export class PipelineRunner {
       );
       managerLoopHandler.setObserverFactory(async (input) => {
         if (
-          input.childExecution.source === "dotfile" &&
+          input.childExecution.kind === "managed_pipeline" &&
           input.childRuntime instanceof PipelineManagerChildRuntime
         ) {
           return new PipelineManagerChildRuntimeObserver(input.childRuntime);
+        }
+        if (input.childExecution.kind === "attached_backend_execution") {
+          const supervisor = getAttachedExecutionSupervisor(this.config.backend);
+          if (supervisor) {
+            return new AttachedExecutionManagerObserver(
+              supervisor,
+              input.childExecution.attachedTarget,
+            );
+          }
         }
         return this.config.managerObserverFactory?.(input) ?? null;
       });
@@ -128,7 +141,7 @@ export class PipelineRunner {
       );
       context.set("internal.effective_fidelity", effectiveFidelity);
 
-      const executionId = resolveThreadKey({
+      const threadKey = resolveThreadKey({
         nodeThreadId: currentNode.threadId,
         edgeThreadId: subgraphIncomingEdge?.threadId ?? "",
         graphDefaultThread: String(graph.attrs["default_thread"] ?? ""),
@@ -136,11 +149,11 @@ export class PipelineRunner {
         previousNodeId: subgraphPreviousNodeId,
       });
       if (effectiveFidelity === "full") {
-        context.set("internal.thread_key", executionId);
+        context.set("internal.thread_key", threadKey);
       } else {
         context.delete("internal.thread_key");
       }
-      context.set("internal.current_execution_id", executionId);
+      context.delete("internal.current_backend_execution_ref");
       context.set("internal.current_node_id", currentNode.id);
 
       // Execute the handler for this node
@@ -156,7 +169,12 @@ export class PipelineRunner {
         context.applyUpdates(lastOutcome.contextUpdates as Record<string, unknown>);
       }
       applyOutcomeRuntimeContext(context, lastOutcome);
-      context.set("internal.last_completed_execution_id", executionId);
+      const completedThreadKey = context.getString("internal.thread_key");
+      if (completedThreadKey) {
+        context.set("internal.last_completed_thread_key", completedThreadKey);
+      } else {
+        context.delete("internal.last_completed_thread_key");
+      }
       context.set("internal.last_completed_node_id", currentNode.id);
       const currentBranchKey = context.getString("internal.current_branch_key");
       if (currentBranchKey) {
@@ -408,7 +426,7 @@ export class PipelineRunner {
 
       // Thread resolution (spec §5.4): when fidelity is "full", determine thread key
       // for LLM session reuse.
-      const executionId = resolveThreadKey({
+      const threadKey = resolveThreadKey({
         nodeThreadId: node.threadId,
         edgeThreadId: incomingEdge?.threadId ?? "",
         graphDefaultThread: String(graph.attrs["default_thread"] ?? ""),
@@ -416,13 +434,13 @@ export class PipelineRunner {
         previousNodeId,
       });
       if (effectiveFidelity === "full") {
-        context.set("internal.thread_key", executionId);
+        context.set("internal.thread_key", threadKey);
       } else {
         context.delete("internal.thread_key");
       }
 
       context.set("internal.effective_fidelity", effectiveFidelity);
-      context.set("internal.current_execution_id", executionId);
+      context.delete("internal.current_backend_execution_ref");
       context.set("internal.current_node_id", node.id);
 
       // Step 2: Execute node handler with retry
@@ -495,7 +513,12 @@ export class PipelineRunner {
       // Step 4: Record completion
       completedNodes.push(node.id);
       nodeOutcomes.set(node.id, outcome);
-      context.set("internal.last_completed_execution_id", executionId);
+      const completedThreadKey = context.getString("internal.thread_key");
+      if (completedThreadKey) {
+        context.set("internal.last_completed_thread_key", completedThreadKey);
+      } else {
+        context.delete("internal.last_completed_thread_key");
+      }
       context.set("internal.last_completed_node_id", node.id);
       const currentBranchKey = context.getString("internal.current_branch_key");
       if (currentBranchKey) {
@@ -789,9 +812,11 @@ class PipelineManagerChildRuntime implements ManagerChildRuntime {
     const childDotfile = String(this.input.graph.attrs["stack.child_dotfile"] ?? "").trim();
     const autostart =
       String(this.input.graph.attrs["stack.child_autostart"] ?? "true").toLowerCase() !== "false";
-    const adapterExecutionId = this.input.context.getString("internal.last_completed_execution_id");
-    const adapterBranchKey = this.input.context.getString("internal.last_completed_branch_key");
-    const adapterNodeId = this.input.context.getString("internal.last_completed_node_id");
+    const backendExecutionRef = this.input.context.getString(
+      "internal.last_completed_backend_execution_ref",
+    );
+    const attachedBranchKey = this.input.context.getString("internal.last_completed_branch_key");
+    const attachedNodeId = this.input.context.getString("internal.last_completed_node_id");
 
     if (childDotfile) {
       const resolvedDotfile = path.isAbsolute(childDotfile)
@@ -801,25 +826,16 @@ class PipelineManagerChildRuntime implements ManagerChildRuntime {
         id: `${parentRunId}:${this.input.node.id}:child`,
         runId: `${parentRunId}:${this.input.node.id}:child-run`,
         ownerNodeId: this.input.node.id,
-        source: "dotfile",
+        kind: "managed_pipeline",
         autostart,
         dotfile: resolvedDotfile,
-        ...((adapterExecutionId || adapterBranchKey || adapterNodeId)
-          ? {
-              adapterTarget: {
-                ...(adapterExecutionId ? { executionId: adapterExecutionId } : {}),
-                ...(adapterBranchKey ? { branchKey: adapterBranchKey } : {}),
-                ...(adapterNodeId ? { nodeId: adapterNodeId } : {}),
-              },
-            }
-          : {}),
       });
       this.childExecution = execution;
       this.runConfig.onManagerChildExecution?.(execution);
       return execution;
     }
 
-    if (!adapterExecutionId) {
+    if (!backendExecutionRef) {
       throw new Error("Manager loop child execution is missing");
     }
 
@@ -827,12 +843,12 @@ class PipelineManagerChildRuntime implements ManagerChildRuntime {
       id: `${parentRunId}:${this.input.node.id}:attached-child`,
       runId: parentRunId,
       ownerNodeId: this.input.node.id,
-      source: "attached",
+      kind: "attached_backend_execution",
       autostart: false,
-      adapterTarget: {
-        executionId: adapterExecutionId,
-        ...(adapterBranchKey ? { branchKey: adapterBranchKey } : {}),
-        ...(adapterNodeId ? { nodeId: adapterNodeId } : {}),
+      attachedTarget: {
+        backendExecutionRef,
+        ...(attachedBranchKey ? { branchKey: attachedBranchKey } : {}),
+        ...(attachedNodeId ? { nodeId: attachedNodeId } : {}),
       },
     });
     this.childExecution = execution;
@@ -842,11 +858,8 @@ class PipelineManagerChildRuntime implements ManagerChildRuntime {
 
   async startChildExecution(context: Context): Promise<void> {
     const execution = await this.ensureChildExecution(context);
-    if (execution.source !== "dotfile" || this.childStarted) {
+    if (execution.kind !== "managed_pipeline" || this.childStarted) {
       return;
-    }
-    if (!execution.dotfile) {
-      throw new Error("Manager child DOT file is missing");
     }
     if (!fs.existsSync(execution.dotfile)) {
       throw new Error(`Manager child DOT file not found: ${execution.dotfile}`);
@@ -952,6 +965,28 @@ class PipelineManagerChildRuntimeObserver implements ManagerObserver {
   }
 }
 
+class AttachedExecutionManagerObserver implements ManagerObserver {
+  constructor(
+    private readonly supervisor: AttachedExecutionSupervisor,
+    private readonly target: import("../backend/contracts.js").AttachedExecutionTarget,
+  ) {}
+
+  async observe(context: Context): Promise<{
+    childStatus: "running" | "completed" | "failed";
+    childOutcome?: string;
+    childLockDecision?: "resolved" | "reopen";
+    telemetry?: Record<string, unknown>;
+  }> {
+    const snapshot = await this.supervisor.observeAttachedExecution(this.target, context);
+    return {
+      childStatus: snapshot.status,
+      ...(snapshot.outcome ? { childOutcome: snapshot.outcome } : {}),
+      ...(snapshot.lockDecision ? { childLockDecision: snapshot.lockDecision } : {}),
+      ...(snapshot.telemetry ? { telemetry: snapshot.telemetry } : {}),
+    };
+  }
+}
+
 function mapManagerChildOutcome(status: StageStatus): string {
   if (status === StageStatus.SUCCESS) {
     return "success";
@@ -966,6 +1001,15 @@ function mapManagerChildOutcome(status: StageStatus): string {
     return "skipped";
   }
   return String(status);
+}
+
+function getAttachedExecutionSupervisor(
+  backend: CodergenBackend | null | undefined,
+): AttachedExecutionSupervisor | null {
+  if (!backend) {
+    return null;
+  }
+  return (backend as CapableBackend).asAttachedExecutionSupervisor?.() ?? null;
 }
 
 // Re-export RetryPolicy for the runner module

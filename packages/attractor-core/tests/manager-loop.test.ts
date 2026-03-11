@@ -313,7 +313,7 @@ describe("ManagerLoopHandler", () => {
       });
       const ctx = Context.fromSnapshot({
         "internal.run_id": "run-1",
-        "internal.last_completed_execution_id": "child-thread",
+        "internal.last_completed_backend_execution_ref": "backend-child-ref",
         "internal.last_completed_node_id": "child",
       });
       const result = await handler.execute(node, ctx, stubGraph, stubLogsRoot);
@@ -351,7 +351,7 @@ describe("ManagerLoopHandler", () => {
       });
       const ctx = Context.fromSnapshot({
         "internal.run_id": "run-1",
-        "internal.last_completed_execution_id": "child-thread",
+        "internal.last_completed_backend_execution_ref": "backend-child-ref",
       });
       await handler.execute(node, ctx, stubGraph, stubLogsRoot);
 

@@ -11,7 +11,7 @@
       "---",
       "---",
       "Result: fail",
-      "Completed: start -> child -> manager -> exit",
+      "Completed: start -> child -> manager",
       "Logs: <TMP_ROOT>/logs"
     ],
     "stderr": [
@@ -23,25 +23,24 @@
       "status": "fail",
       "failureReason": "Max cycles exceeded"
     },
-    "currentNode": "exit",
+    "currentNode": "manager",
     "completedNodes": [
       "start",
       "child",
-      "manager",
-      "exit"
+      "manager"
     ],
     "waitingForQuestionId": "",
     "keyContext": {
       "last_stage": "child",
       "outcome": "fail",
       "stack.manager_loop.artifact_path": "<TMP_ROOT>/logs/manager/manager_loop.json",
-      "stack.manager_loop.child.adapter.execution_id": "child-thread",
-      "stack.manager_loop.child.adapter.node_id": "child",
+      "stack.manager_loop.child.attached.backend_execution_ref": "child-backend-ref",
+      "stack.manager_loop.child.attached.node_id": "child",
       "stack.manager_loop.child.autostart": "false",
       "stack.manager_loop.child.id": "logs:manager:attached-child",
+      "stack.manager_loop.child.kind": "attached_backend_execution",
       "stack.manager_loop.child.owner_node_id": "manager",
       "stack.manager_loop.child.run_id": "logs",
-      "stack.manager_loop.child.source": "attached",
       "stack.manager_loop.current_cycle": 2,
       "stack.manager_loop.cycle_count": 2,
       "stack.manager_loop.last_child_lock": "",

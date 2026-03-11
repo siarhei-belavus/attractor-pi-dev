@@ -3,7 +3,7 @@ import type { Context } from "../state/context.js";
 export interface SteeringTarget {
   runId: string;
   childExecutionId?: string;
-  executionId?: string;
+  backendExecutionRef?: string;
   branchKey?: string;
   nodeId?: string;
 }
@@ -66,8 +66,8 @@ export class InMemorySteeringQueue implements SteeringQueue {
  * Steering target matching is intentionally exact for every field present on the message:
  * - `runId` is always required and always matched exactly.
  * - If a message includes `childExecutionId`, the consumer must present the same value.
- * - If a message includes `executionId`, `branchKey`, or `nodeId`, the consumer must present
- *   the same value for that field to drain it.
+ * - If a message includes `backendExecutionRef`, `branchKey`, or `nodeId`, the consumer must
+ *   present the same value for that field to drain it.
  * - If a field is absent on the message, it does not participate in matching.
  *
  * This means "broadcast" is only possible when a producer deliberately omits narrower fields.
@@ -89,8 +89,8 @@ export function matchesSteeringTarget(
     return false;
   }
   if (
-    messageTarget.executionId !== undefined &&
-    messageTarget.executionId !== consumerTarget.executionId
+    messageTarget.backendExecutionRef !== undefined &&
+    messageTarget.backendExecutionRef !== consumerTarget.backendExecutionRef
   ) {
     return false;
   }
@@ -110,7 +110,7 @@ export function createSteeringTarget(
   runId: string,
   opts: {
     childExecutionId?: string;
-    executionId?: string;
+    backendExecutionRef?: string;
     branchKey?: string;
     nodeId?: string;
   } = {},
@@ -118,7 +118,7 @@ export function createSteeringTarget(
   return {
     runId,
     ...(opts.childExecutionId ? { childExecutionId: opts.childExecutionId } : {}),
-    ...(opts.executionId ? { executionId: opts.executionId } : {}),
+    ...(opts.backendExecutionRef ? { backendExecutionRef: opts.backendExecutionRef } : {}),
     ...(opts.branchKey ? { branchKey: opts.branchKey } : {}),
     ...(opts.nodeId ? { nodeId: opts.nodeId } : {}),
   };
@@ -134,13 +134,13 @@ export function getCurrentSteeringTarget(context: Context): SteeringTarget | nul
     return null;
   }
 
-  const executionId = context.getString("internal.current_execution_id");
+  const backendExecutionRef = context.getString("internal.current_backend_execution_ref");
   const childExecutionId = context.getString("internal.manager_child_execution_id");
   const branchKey = context.getString("internal.current_branch_key");
   const nodeId = context.getString("internal.current_node_id");
   return createSteeringTarget(runId, {
     childExecutionId,
-    executionId,
+    backendExecutionRef,
     branchKey,
     nodeId,
   });
@@ -152,13 +152,13 @@ export function getLastCompletedSteeringTarget(context: Context): SteeringTarget
     return null;
   }
 
-  const executionId = context.getString("internal.last_completed_execution_id");
+  const backendExecutionRef = context.getString("internal.last_completed_backend_execution_ref");
   const childExecutionId = context.getString("internal.manager_child_execution_id");
   const branchKey = context.getString("internal.last_completed_branch_key");
   const nodeId = context.getString("internal.last_completed_node_id");
   return createSteeringTarget(runId, {
     childExecutionId,
-    executionId,
+    backendExecutionRef,
     branchKey,
     nodeId,
   });

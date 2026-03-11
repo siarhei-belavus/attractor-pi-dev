@@ -108,6 +108,7 @@ export class CodergenHandler implements Handler {
     if (this.backend) {
       try {
         const result = await this.backend.run(node, prompt, filteredContext);
+        syncBackendExecutionContext(context, filteredContext);
         if (typeof result === "object" && "status" in result) {
           writeStatus(stageDir, result as Outcome);
           return result as Outcome;
@@ -885,6 +886,11 @@ export class ManagerLoopHandler implements Handler {
         : null);
 
     if (!observer) {
+      if (childExecution?.kind === "attached_backend_execution") {
+        return failOutcome(
+          "Attached backend execution supervision is unsupported by the configured backend",
+        );
+      }
       return failOutcome("Manager loop observer wiring is missing");
     }
 
@@ -1104,8 +1110,8 @@ function inferAttachedManagerChildExecution(
   context: Context,
 ) {
   const runId = context.getString("internal.run_id");
-  const executionId = context.getString("internal.last_completed_execution_id");
-  if (!runId || !executionId) {
+  const backendExecutionRef = context.getString("internal.last_completed_backend_execution_ref");
+  if (!runId || !backendExecutionRef) {
     return null;
   }
   const branchKey = context.getString("internal.last_completed_branch_key");
@@ -1114,14 +1120,28 @@ function inferAttachedManagerChildExecution(
     id: `${runId}:${node.id}:attached-child`,
     runId,
     ownerNodeId: node.id,
-    source: "attached",
+    kind: "attached_backend_execution",
     autostart: false,
-    adapterTarget: {
-      executionId,
+    attachedTarget: {
+      backendExecutionRef,
       ...(branchKey ? { branchKey } : {}),
       ...(nodeId ? { nodeId } : {}),
     },
   });
+}
+
+function syncBackendExecutionContext(source: Context, backendContext: Context): void {
+  syncContextKey(source, backendContext, "internal.current_backend_execution_ref");
+  syncContextKey(source, backendContext, "internal.last_completed_backend_execution_ref");
+}
+
+function syncContextKey(target: Context, source: Context, key: string): void {
+  const value = source.getString(key);
+  if (value) {
+    target.set(key, value);
+  } else {
+    target.delete(key);
+  }
 }
 
 // ── Helpers ──

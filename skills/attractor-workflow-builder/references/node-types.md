@@ -163,8 +163,15 @@ Child workflow wiring:
 - `graph[stack.child_dotfile]`
 - `graph[stack.child_autostart]`
 
+Manager semantics:
+- With `stack.child_dotfile`, the manager supervises a `managed_pipeline`.
+- Without a child DOT file, the manager may supervise an `attached_backend_execution` only if the configured backend provides that capability at runtime.
+- `thread_id` is not the attached execution identity. Backend-owned execution refs are runtime data, not workflow syntax.
+
 Useful produced keys:
 - `stack.child.status`
 - `stack.child.outcome`
+- `stack.child.lock_decision`
 - `stack.manager_loop.child.id`
 - `stack.manager_loop.child.run_id`
+- `stack.manager_loop.child.kind`

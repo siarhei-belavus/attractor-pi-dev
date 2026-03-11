@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  type BackendFactoryOptions,
+  type CapableBackend,
   preparePipeline,
   PipelineRunner,
   Severity,
@@ -12,27 +14,22 @@ import {
   InMemorySteeringQueue,
   type PipelineEvent,
   type CodergenBackend,
-  type ManagerObserverFactory,
 } from "@attractor/core";
-import {
-  PiAgentCodergenBackend,
-  type PiAgentBackendOptions,
-  type SessionEvent,
-  type SessionSnapshot,
-} from "@attractor/backend-pi-dev";
 import { createDebugAgentWriter } from "./debug-agent.js";
 import {
+  createTestBackend,
   createTestInterviewer,
-  createTestManagerObserverFactory,
   loadCliTestConfig,
 } from "./test-harness.js";
 
 export interface CliDeps {
-  createBackend: (options: PiAgentBackendOptions) => CodergenBackend;
+  createBackend: (options: BackendFactoryOptions) => CodergenBackend;
 }
 
 const defaultDeps: CliDeps = {
-  createBackend: (options) => new PiAgentCodergenBackend(options),
+  createBackend: () => {
+    throw new Error("No backend factory configured for @attractor/cli");
+  },
 };
 
 export async function main(argv: string[] = process.argv.slice(2), deps: CliDeps = defaultDeps) {
@@ -205,48 +202,32 @@ export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
   const interviewer =
     createTestInterviewer(testConfig, logsRoot, runId) ??
     (autoApprove ? new AutoApproveInterviewer() : new ConsoleInterviewer());
-  const managerObserverFactory =
-    createTestManagerObserverFactory(testConfig) ?? undefined;
   const resumeFrom = resumeFromFlag ?? testConfig?.resumeFrom;
+  const testBackend = createTestBackend(testConfig);
 
   let backend: CodergenBackend | null;
   const steeringQueue = new InMemorySteeringQueue();
-  if (simulate) {
+  if (testBackend) {
+    backend = testBackend;
+  } else if (simulate) {
     backend = null;
   } else {
     backend = deps.createBackend({
       cwd: path.dirname(filePath),
       steeringQueue,
-      ...(provider && { defaultProvider: provider }),
-      ...(model && { defaultModel: model }),
-      ...(debugWriter && {
-        onSessionEvent: (event: SessionEvent) => {
-          debugWriter.writeEvent(event);
-        },
-        onSessionSnapshot: (snapshot: SessionSnapshot) => {
-          debugWriter.writeSnapshot(snapshot);
-        },
-        onWarning: (message: string) => {
-          console.warn(`[WARN] ${message}`);
-        },
-      }),
-      onAgentEvent: (event) => {
-        if (verbose) {
-          console.log(`  [agent] ${event.type}`);
-        }
+      ...(provider && { provider }),
+      ...(model && { model }),
+      ...(debugWriter ? { debugSink: debugWriter } : {}),
+      warningSink: (message: string) => {
+        console.warn(`[WARN] ${message}`);
       },
     });
   }
-  const backendManagerObserverFactory = backend ? getManagerObserverFactory(backend) : undefined;
+  warnIfDebugUnsupported(backend, debugAgent);
 
   const runner = new PipelineRunner({
     backend,
     interviewer,
-    ...(managerObserverFactory
-      ? { managerObserverFactory }
-      : backendManagerObserverFactory
-        ? { managerObserverFactory: backendManagerObserverFactory }
-        : {}),
     logsRoot,
     ...(resumeFrom ? { resumeFrom } : {}),
     runId,
@@ -335,13 +316,12 @@ export async function serveCommand(args: string[], deps: CliDeps = defaultDeps) 
   const backend = deps.createBackend({
     cwd: process.cwd(),
     steeringQueue,
-    ...(provider && { defaultProvider: provider }),
-    ...(model && { defaultModel: model }),
+    ...(provider && { provider }),
+    ...(model && { model }),
   });
 
   const server = createServer({
     backend,
-    managerObserverFactory: getManagerObserverFactory(backend),
     steeringQueue,
   });
 
@@ -410,18 +390,17 @@ export async function steerCommand(args: string[]) {
   console.log(`Steering queued for ${runId}`);
 }
 
-function getManagerObserverFactory(
-  backend: CodergenBackend,
-): ManagerObserverFactory | undefined {
-  if (
-    "createManagerObserverFactory" in backend &&
-    typeof (backend as { createManagerObserverFactory?: unknown }).createManagerObserverFactory === "function"
-  ) {
-    return (backend as {
-      createManagerObserverFactory: () => ManagerObserverFactory;
-    }).createManagerObserverFactory();
+function warnIfDebugUnsupported(
+  backend: CodergenBackend | null,
+  debugAgent: boolean,
+): void {
+  if (!debugAgent || !backend) {
+    return;
   }
-  return undefined;
+  const capabilities = (backend as CapableBackend).getCapabilities?.();
+  if (capabilities?.debugTelemetry === false) {
+    console.warn("[WARN] Backend does not support debug telemetry; skipping debug artifacts");
+  }
 }
 
 function printEvent(event: PipelineEvent, verbose: boolean) {

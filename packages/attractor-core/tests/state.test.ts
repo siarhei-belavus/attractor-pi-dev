@@ -133,7 +133,7 @@ describe("Checkpoint", () => {
     const queue = new InMemorySteeringQueue();
     queue.enqueue(
       createSteeringMessage({
-        target: { runId: "run-1", executionId: "exec-1" },
+        target: { runId: "run-1", backendExecutionRef: "exec-1" },
         message: "Ephemeral steering",
         source: "api",
       }),
@@ -164,7 +164,7 @@ describe("Checkpoint", () => {
       fs.readFileSync(path.join(tmpDir, "checkpoint.json"), "utf-8"),
     ) as Record<string, unknown>;
     expect(JSON.stringify(saved)).not.toContain("Ephemeral steering");
-    expect(queue.peek({ runId: "run-1", executionId: "exec-1" })).toHaveLength(1);
+    expect(queue.peek({ runId: "run-1", backendExecutionRef: "exec-1" })).toHaveLength(1);
   });
 });
 

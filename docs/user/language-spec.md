@@ -401,6 +401,9 @@ These are set automatically by the execution engine.
 | `internal.incoming_edge_thread_id` | String | Thread ID from the incoming edge (for handler use). |
 | `internal.effective_fidelity` | String | Resolved fidelity mode for the current node. |
 | `internal.thread_key` | String | Resolved thread key for LLM session reuse. |
+| `internal.last_completed_thread_key` | String | Thread key from the last completed full-fidelity LLM stage. |
+| `internal.current_backend_execution_ref` | String | Backend-owned execution ref for the currently running attached backend execution, when provided by the backend. |
+| `internal.last_completed_backend_execution_ref` | String | Backend-owned execution ref from the last completed stage, when provided by the backend. |
 
 ### Handler-Set Keys
 

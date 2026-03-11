@@ -1,21 +1,20 @@
 {
   "testConfig": {
-    "managerObserver": {
+    "attachedExecutionSupervisor": {
       "observations": [
         {
           "childStatus": "running",
           "telemetry": {
-            "session_state": "working"
+            "lifecycle_state": "working"
           }
         },
         {
           "childStatus": "running",
           "telemetry": {
-            "session_state": "still-working"
+            "lifecycle_state": "still-working"
           }
         }
       ]
     }
   }
 }
-

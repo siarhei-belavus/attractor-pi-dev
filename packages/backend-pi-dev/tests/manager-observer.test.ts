@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  applyManagerChildExecution,
+  createManagerChildExecution,
   Context,
   InMemorySteeringQueue,
   createSteeringMessage,
@@ -31,52 +33,18 @@ describe("Pi manager observer integration", () => {
       modelId: "claude-test",
     });
 
-    const factory = backend.createManagerObserverFactory();
-    const observer = await factory({
-      node: {
-        id: "manager",
-        label: "Manager",
-        shape: "house",
-        type: "stack.manager_loop",
-        prompt: "",
-        maxRetries: 0,
-        goalGate: false,
-        retryTarget: "",
-        fallbackRetryTarget: "",
-        fidelity: "",
-        threadId: "",
-        classes: [],
-        timeout: null,
-        llmModel: "",
-        llmProvider: "",
-        reasoningEffort: "",
-        autoStatus: false,
-        allowPartial: false,
-        attrs: {},
+    const snapshot = await backend.observeAttachedExecution(
+      {
+        backendExecutionRef: "child-thread",
       },
-      context: Context.fromSnapshot({
+      Context.fromSnapshot({
         "internal.run_id": "run-1",
-        "internal.last_completed_execution_id": "child-thread",
+        "internal.manager_child_execution_id": "run-1:manager:attached-child",
       }),
-      graph: {} as any,
-      logsRoot: "/tmp",
-      steeringQueue: new InMemorySteeringQueue(),
-      childExecution: {
-        id: "run-1:manager:attached-child",
-        runId: "run-1",
-        ownerNodeId: "manager",
-        source: "attached",
-        autostart: false,
-        adapterTarget: {
-          executionId: "child-thread",
-        },
-      },
-    });
-
-    const snapshot = await observer!.observe(new Context());
+    );
 
     expect(snapshot).toEqual({
-      childStatus: "running",
+      status: "running",
       telemetry: {
         session_state: SessionState.AWAITING_INPUT,
         awaiting_input: true,
@@ -154,7 +122,7 @@ describe("Pi manager observer integration", () => {
     backend.consumeQueuedSteering({
       runId: "run-1",
       childExecutionId: "run-1:manager:attached-child",
-      executionId: "child-thread",
+      backendExecutionRef: "child-thread",
     });
 
     expect(steerSpy).toHaveBeenCalledWith("Keep going");
@@ -205,51 +173,31 @@ describe("Pi manager observer integration", () => {
       }),
     );
 
-    const factory = backend.createManagerObserverFactory();
-    const observer = await factory({
-      node: {
-        id: "manager",
-        label: "Manager",
-        shape: "house",
-        type: "stack.manager_loop",
-        prompt: "",
-        maxRetries: 0,
-        goalGate: false,
-        retryTarget: "",
-        fallbackRetryTarget: "",
-        fidelity: "",
-        threadId: "",
-        classes: [],
-        timeout: null,
-        llmModel: "",
-        llmProvider: "",
-        reasoningEffort: "",
-        autoStatus: false,
-        allowPartial: false,
-        attrs: {},
-      },
-      context: Context.fromSnapshot({
-        "internal.run_id": "run-1",
-        "internal.last_completed_execution_id": "child-thread",
-        "internal.last_completed_node_id": "child",
-      }),
-      graph: {} as any,
-      logsRoot: "/tmp",
-      steeringQueue,
-      childExecution: {
+    const context = new Context();
+    context.set("internal.run_id", "run-1");
+    context.set("internal.manager_child_execution_id", "run-1:manager:attached-child");
+    applyManagerChildExecution(
+      context,
+      createManagerChildExecution({
         id: "run-1:manager:attached-child",
         runId: "run-1",
         ownerNodeId: "manager",
-        source: "attached",
+        kind: "attached_backend_execution",
         autostart: false,
-        adapterTarget: {
-          executionId: "child-thread",
+        attachedTarget: {
+          backendExecutionRef: "child-thread",
           nodeId: "child",
         },
-      },
-    });
+      }),
+    );
 
-    await observer!.observe(new Context());
+    await backend.observeAttachedExecution(
+      {
+        backendExecutionRef: "child-thread",
+        nodeId: "child",
+      },
+      context,
+    );
 
     expect(calls).toEqual([
       "steer:Focus on the failing test first",

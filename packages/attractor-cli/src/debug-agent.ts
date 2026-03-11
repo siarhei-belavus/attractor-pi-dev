@@ -1,47 +1,64 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { SessionEvent, SessionSnapshot } from "@attractor/backend-pi-dev";
+import type { DebugEvent, DebugSnapshot, DebugTelemetrySink } from "@attractor/core";
 
-export interface DebugAgentWriter {
-  writeEvent: (event: SessionEvent) => void;
-  writeSnapshot: (snapshot: SessionSnapshot) => void;
-}
-
-export function createDebugAgentWriter(logsRoot: string): DebugAgentWriter {
+export function createDebugAgentWriter(logsRoot: string): DebugTelemetrySink {
   fs.mkdirSync(logsRoot, { recursive: true });
 
-  const threadPath = path.join(logsRoot, "agent-thread.jsonl");
-  const promptPath = path.join(logsRoot, "system-prompt.md");
-  const toolsPath = path.join(logsRoot, "active-tools.json");
-
   return {
-    writeEvent(event) {
+    writeEvent(event: DebugEvent) {
+      const threadDir = path.join(logsRoot, "debug", "threads", sanitizePathSegment(event.data.sessionKey));
+      fs.mkdirSync(threadDir, { recursive: true });
+      const threadPath = path.join(threadDir, "session-events.jsonl");
       const payload = {
         timestamp: new Date().toISOString(),
         event,
       };
       fs.appendFileSync(threadPath, `${JSON.stringify(redactDebugPayload(payload))}\n`);
     },
-    writeSnapshot(snapshot) {
-      fs.writeFileSync(promptPath, snapshot.systemPrompt || "");
+    writeSnapshot(snapshot: DebugSnapshot) {
+      const threadDir = path.join(logsRoot, "debug", "threads", sanitizePathSegment(snapshot.sessionKey));
+      fs.mkdirSync(threadDir, { recursive: true });
+
+      const artifactDir = snapshot.nodeId
+        ? path.join(logsRoot, sanitizePathSegment(snapshot.nodeId))
+        : threadDir;
+      fs.mkdirSync(artifactDir, { recursive: true });
+
+      if (snapshot.promptText !== undefined) {
+        fs.writeFileSync(path.join(artifactDir, "system-prompt.md"), snapshot.promptText);
+      }
+      if (snapshot.activeTools) {
+        fs.writeFileSync(
+          path.join(artifactDir, "active-tools.json"),
+          JSON.stringify(
+            redactDebugPayload({
+              generatedAt: new Date().toISOString(),
+              phase: snapshot.phase,
+              sessionKey: snapshot.sessionKey,
+              nodeId: snapshot.nodeId,
+              provider: snapshot.provider,
+              modelId: snapshot.modelId,
+              activeTools: snapshot.activeTools,
+              diagnostics: snapshot.diagnostics,
+            }),
+            null,
+            2,
+          ),
+        );
+      }
+
       fs.writeFileSync(
-        toolsPath,
-        JSON.stringify(
-          redactDebugPayload({
-            generatedAt: new Date().toISOString(),
-            phase: snapshot.phase,
-            threadKey: snapshot.threadKey,
-            provider: snapshot.provider,
-            modelId: snapshot.modelId,
-            activeTools: snapshot.activeTools,
-            toolPolicyDiagnostics: snapshot.toolPolicyDiagnostics,
-          }),
-          null,
-          2,
-        ),
+        path.join(threadDir, "latest-snapshot.json"),
+        JSON.stringify(redactDebugPayload(snapshot), null, 2),
       );
     },
   };
+}
+
+function sanitizePathSegment(input: unknown): string {
+  const value = String(input ?? "").trim();
+  return value.length > 0 ? value.replace(/[\\/]/g, "_") : "unknown";
 }
 
 export function redactDebugPayload(value: unknown): unknown {

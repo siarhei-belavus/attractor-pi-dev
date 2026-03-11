@@ -1,7 +1,7 @@
 import * as esbuild from 'esbuild';
 
 await esbuild.build({
-  entryPoints: ['../attractor-cli/dist/index.js'],
+  entryPoints: ['src/index.ts'],
   outfile: 'dist/attractor.mjs',
   bundle: true,
   format: 'esm',

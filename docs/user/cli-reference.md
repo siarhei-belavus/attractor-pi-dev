@@ -25,7 +25,7 @@ attractor run <file.dot> [options]
 | `--logs-dir <path>`   | Output directory for logs and checkpoints. Default: `.attractor-runs/<timestamp>`. |
 | `--provider <name>`   | LLM provider. Default: `anthropic`. |
 | `--model <id>`        | LLM model ID. Default: `claude-sonnet-4-5-20250929`. |
-| `--debug-agent`       | Write redacted agent internals to run logs: `system-prompt.md`, `active-tools.json`, `agent-thread.jsonl`. |
+| `--debug-agent`       | When supported by the configured backend, write redacted debug telemetry into node and thread debug artifacts. |
 | `--set <key=value>`   | Set a pipeline variable. Repeatable. Overrides defaults from `graph[vars]`. |
 | `--verbose`           | Show detailed event output (checkpoint saves, stage completions, agent events). |
 
@@ -188,18 +188,31 @@ Each `attractor run` creates a log directory (default: `.attractor-runs/<timesta
         {artifact_id}.json       # File-backed artifacts
 ```
 
+## Debug Artifacts
+
+When a backend supports debug telemetry, `--debug-agent` writes:
+
+```text
+<logsRoot>/
+  <nodeId>/
+    system-prompt.md
+    active-tools.json
+  debug/
+    threads/
+      <sessionKey>/
+        session-events.jsonl
+        latest-snapshot.json
+```
+
+If the backend does not support debug telemetry, the CLI prints a warning and the run continues without debug artifacts.
+
 ## Environment Variables
 
 | Variable                  | Description |
 |---------------------------|-------------|
 | `ATTRACTOR_COMMANDS_PATH` | Comma-separated directories to search for `/command` prompt files (in addition to `.attractor/commands/`). |
-| `ATTRACTOR_PI_RESOURCE_DISCOVERY` | Pi extension discovery mode: `auto` (default) or `none`. |
-| `ATTRACTOR_PI_RESOURCE_ALLOWLIST` | Comma-separated absolute extension paths to load explicitly (for example `/abs/ext-a.ts,/abs/ext-b.ts`). |
 
-## Extension Prompt Behavior
-
-When using pi extensions, some extensions may modify the effective system prompt at turn start.  
-Treat extension selection as a trusted configuration decision and verify extension behavior before enabling it in production workflows.
+Backend-specific environment variables and extension behavior are documented in backend-specific guides, not in this generic CLI reference.
 
 ## Exit Codes
 

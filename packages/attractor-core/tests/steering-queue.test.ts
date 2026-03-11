@@ -15,34 +15,34 @@ describe("InMemorySteeringQueue", () => {
     const queue = new InMemorySteeringQueue();
     queue.enqueue(
       createSteeringMessage({
-        target: { runId: "run-1", executionId: "exec-1" },
+        target: { runId: "run-1", backendExecutionRef: "exec-1" },
         message: "First",
         source: "api",
       }),
     );
 
-    expect(queue.peek({ runId: "run-1", executionId: "exec-1" })).toHaveLength(1);
-    expect(queue.drain({ runId: "run-1", executionId: "exec-1" })).toMatchObject([
+    expect(queue.peek({ runId: "run-1", backendExecutionRef: "exec-1" })).toHaveLength(1);
+    expect(queue.drain({ runId: "run-1", backendExecutionRef: "exec-1" })).toMatchObject([
       { message: "First" },
     ]);
-    expect(queue.peek({ runId: "run-1", executionId: "exec-1" })).toEqual([]);
+    expect(queue.peek({ runId: "run-1", backendExecutionRef: "exec-1" })).toEqual([]);
   });
 
   it("filters by branch key without leaking to sibling branches", () => {
     const queue = new InMemorySteeringQueue();
     queue.enqueue(
       createSteeringMessage({
-        target: { runId: "run-1", executionId: "exec-1", branchKey: "branch-a" },
+        target: { runId: "run-1", backendExecutionRef: "exec-1", branchKey: "branch-a" },
         message: "Only branch A",
         source: "manager",
       }),
     );
 
     expect(
-      queue.peek({ runId: "run-1", executionId: "exec-1", branchKey: "branch-b" }),
+      queue.peek({ runId: "run-1", backendExecutionRef: "exec-1", branchKey: "branch-b" }),
     ).toEqual([]);
     expect(
-      queue.drain({ runId: "run-1", executionId: "exec-1", branchKey: "branch-a" }),
+      queue.drain({ runId: "run-1", backendExecutionRef: "exec-1", branchKey: "branch-a" }),
     ).toMatchObject([{ message: "Only branch A" }]);
   });
 
@@ -69,10 +69,10 @@ describe("InMemorySteeringQueue", () => {
         id: "child-1",
         runId: "run-1",
         ownerNodeId: "manager",
-        source: "attached",
+        kind: "attached_backend_execution",
         autostart: false,
-        adapterTarget: {
-          executionId: "exec-1",
+        attachedTarget: {
+          backendExecutionRef: "exec-1",
           branchKey: "branch-a",
           nodeId: "child",
         },

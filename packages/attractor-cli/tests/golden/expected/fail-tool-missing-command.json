@@ -11,7 +11,7 @@
       "---",
       "---",
       "Result: fail",
-      "Completed: start -> work -> exit",
+      "Completed: start -> work",
       "Logs: <TMP_ROOT>/logs"
     ],
     "stderr": [
@@ -23,11 +23,10 @@
       "status": "fail",
       "failureReason": "No tool_command specified"
     },
-    "currentNode": "exit",
+    "currentNode": "work",
     "completedNodes": [
       "start",
-      "work",
-      "exit"
+      "work"
     ],
     "waitingForQuestionId": "",
     "keyContext": {

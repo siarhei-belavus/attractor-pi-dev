@@ -11,7 +11,7 @@
       "---",
       "---",
       "Result: fail",
-      "Completed: start -> chooser -> fail_branch -> exit",
+      "Completed: start -> chooser -> fail_branch",
       "Logs: <TMP_ROOT>/logs"
     ],
     "stderr": [
@@ -23,12 +23,11 @@
       "status": "fail",
       "failureReason": "No tool_command specified"
     },
-    "currentNode": "exit",
+    "currentNode": "fail_branch",
     "completedNodes": [
       "start",
       "chooser",
-      "fail_branch",
-      "exit"
+      "fail_branch"
     ],
     "waitingForQuestionId": "",
     "keyContext": {

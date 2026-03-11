@@ -6,14 +6,18 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type {
+  AttachedExecutionSnapshot,
+  AttachedExecutionSupervisor,
+  AttachedExecutionTarget,
+  CapableBackend,
   CodergenBackend,
+  DebugEvent,
+  DebugSnapshot,
+  DebugTelemetrySink,
   GraphNode,
   Context,
   ManagerChildExecution,
   Outcome,
-  ManagerObserver,
-  ManagerObserverFactory,
-  ObserveResult,
   SteeringQueue,
   SteeringTarget,
 } from "@attractor/core";
@@ -44,16 +48,6 @@ import {
   parsePiResourcePolicyFromEnv,
   resolvePiResourcePolicy,
 } from "./extension-resource-policy.js";
-
-export interface SessionSnapshot {
-  phase: "before_submit" | "after_submit";
-  threadKey: string;
-  provider: string;
-  modelId: string;
-  activeTools: string[];
-  systemPrompt: string;
-  toolPolicyDiagnostics: string[];
-}
 
 export interface PiSessionObserverSnapshot {
   childStatus: "running" | "completed" | "failed";
@@ -86,7 +80,7 @@ export interface PiAgentBackendOptions {
   /** Working directory for coding tools */
   cwd?: string;
   /** Event listener for session events */
-  onSessionEvent?: (event: SessionEvent) => void;
+  debugSink?: DebugTelemetrySink;
   /** Legacy event listener for raw agent events */
   onAgentEvent?: (event: AgentSessionEvent) => void;
   /** Reuse sessions across nodes sharing a thread_id */
@@ -101,8 +95,6 @@ export interface PiAgentBackendOptions {
   resourcePolicy?: PiResourcePolicyInput;
   /** Warning listener */
   onWarning?: (message: string) => void;
-  /** Session snapshot listener (for debug artifacts) */
-  onSessionSnapshot?: (snapshot: SessionSnapshot) => void;
   /** Shared steering queue used by manager/API/CLI producers and backend consumers */
   steeringQueue?: SteeringQueue;
 }
@@ -114,7 +106,9 @@ export interface PiAgentBackendOptions {
  * Each node execution creates (or reuses) a Session with provider-specific
  * tools, sends the prompt, waits for completion, and returns the response.
  */
-export class PiAgentCodergenBackend implements CodergenBackend {
+export class PiAgentCodergenBackend
+  implements CapableBackend, AttachedExecutionSupervisor
+{
   private options: Required<
     Pick<
       PiAgentBackendOptions,
@@ -185,8 +179,10 @@ export class PiAgentCodergenBackend implements CodergenBackend {
       });
 
       // Wire up event listeners
-      if (this.options.onSessionEvent) {
-        session.subscribe(this.options.onSessionEvent);
+      if (this.options.debugSink) {
+        session.subscribe((event) => {
+          this.options.debugSink?.writeEvent(this.mapDebugEvent(threadKey, event));
+        });
       }
 
       if (this.options.reuseSessions) {
@@ -197,8 +193,16 @@ export class PiAgentCodergenBackend implements CodergenBackend {
 
     try {
       await session.initialize();
+      context.set("internal.current_backend_execution_ref", threadKey);
     } catch (err) {
-      this.emitSessionSnapshot("before_submit", session, threadKey, provider, modelId);
+      this.emitDebugSnapshot(
+        "before_submit",
+        session,
+        threadKey,
+        provider,
+        modelId,
+        context.getString("internal.current_node_id") || undefined,
+      );
       return {
         status: StageStatus.FAIL,
         failureReason: `Agent initialization failed: ${err}`,
@@ -208,19 +212,35 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     const currentTarget = this.resolveConsumerTarget(context);
     this.bindManagerChildExecution(currentTarget);
     this.deliverSteeringMessages(currentTarget, session);
-    this.emitSessionSnapshot("before_submit", session, threadKey, provider, modelId);
+    this.emitDebugSnapshot(
+      "before_submit",
+      session,
+      threadKey,
+      provider,
+      modelId,
+      context.getString("internal.current_node_id") || undefined,
+    );
 
     // Send prompt and wait for completion
     try {
       await session.submit(prompt);
     } catch (err) {
+      context.set("internal.last_completed_backend_execution_ref", threadKey);
       return {
         status: StageStatus.FAIL,
         failureReason: `Agent execution failed: ${err}`,
       };
     }
 
-    this.emitSessionSnapshot("after_submit", session, threadKey, provider, modelId);
+    context.set("internal.last_completed_backend_execution_ref", threadKey);
+    this.emitDebugSnapshot(
+      "after_submit",
+      session,
+      threadKey,
+      provider,
+      modelId,
+      context.getString("internal.current_node_id") || undefined,
+    );
 
     // Extract the assistant's text response
     const responseText = session.getLastAssistantText() ?? "";
@@ -306,8 +326,15 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     this.sessionMetadata.clear();
   }
 
-  createManagerObserverFactory(): ManagerObserverFactory {
-    return (input) => new PiManagerObserver(this, input.childExecution);
+  getCapabilities() {
+    return {
+      debugTelemetry: true,
+      attachedExecutionSupervision: true,
+    };
+  }
+
+  asAttachedExecutionSupervisor(): AttachedExecutionSupervisor {
+    return this;
   }
 
   getObserverSnapshot(bindingKey: string): PiSessionObserverSnapshot | null {
@@ -376,22 +403,35 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     console.warn(`[backend-pi-dev] ${message}`);
   }
 
-  private emitSessionSnapshot(
+  private emitDebugSnapshot(
     phase: "before_submit" | "after_submit",
     session: Session,
     threadKey: string,
     provider: string,
     modelId: string,
+    nodeId?: string,
   ): void {
-    this.options.onSessionSnapshot?.({
+    this.options.debugSink?.writeSnapshot({
       phase,
-      threadKey,
+      sessionKey: threadKey,
+      ...(nodeId ? { nodeId } : {}),
       provider,
       modelId,
       activeTools: session.getActiveToolNames(),
-      systemPrompt: session.getSystemPrompt() ?? "",
-      toolPolicyDiagnostics: session.getToolPolicyDiagnostics(),
+      promptText: session.getSystemPrompt() ?? "",
+      diagnostics: session.getToolPolicyDiagnostics(),
     });
+  }
+
+  private mapDebugEvent(threadKey: string, event: SessionEvent): DebugEvent {
+    return {
+      kind: event.kind,
+      timestamp: event.timestamp,
+      data: {
+        sessionKey: threadKey,
+        ...event.data,
+      },
+    };
   }
 
   consumeQueuedSteering(target: SteeringTarget | null, sessionOverride?: { steer: (message: string) => void }): string[] {
@@ -408,7 +448,9 @@ export class PiAgentCodergenBackend implements CodergenBackend {
 
     const boundTarget = this.resolveBoundTarget(target);
     const session = sessionOverride ?? (
-      boundTarget?.executionId ? this.sessions.get(boundTarget.executionId) : undefined
+      boundTarget?.backendExecutionRef
+        ? this.sessions.get(boundTarget.backendExecutionRef)
+        : undefined
     );
     if (!session) {
       return [];
@@ -451,49 +493,58 @@ export class PiAgentCodergenBackend implements CodergenBackend {
   }
 
   resolveChildExecutionSessionId(childExecution: ManagerChildExecution): string {
-    if (childExecution.adapterTarget?.executionId) {
-      return childExecution.adapterTarget.executionId;
+    if (childExecution.kind === "attached_backend_execution") {
+      return childExecution.attachedTarget.backendExecutionRef;
     }
     const bound = this.resolveBoundTarget({
       runId: childExecution.runId,
       childExecutionId: childExecution.id,
     });
-    return bound?.executionId ?? "";
+    return bound?.backendExecutionRef ?? "";
   }
 
   private getChildExecutionBindingKey(runId: string, childExecutionId: string): string {
     return `${runId}::${childExecutionId}`;
   }
-}
 
-class PiManagerObserver implements ManagerObserver {
-  constructor(
-    private readonly backend: PiAgentCodergenBackend,
-    private readonly childExecution: ManagerChildExecution,
-  ) {
+  async observeAttachedExecution(
+    target: AttachedExecutionTarget,
+    context: Context,
+  ): Promise<AttachedExecutionSnapshot> {
+    const managerTarget = this.resolveConsumerTarget(context);
+    const steeringTarget: SteeringTarget | null = managerTarget
+      ? {
+          ...managerTarget,
+          backendExecutionRef: target.backendExecutionRef,
+          ...(target.branchKey ? { branchKey: target.branchKey } : {}),
+          ...(target.nodeId ? { nodeId: target.nodeId } : {}),
+        }
+      : null;
+    this.consumeQueuedSteering(steeringTarget);
+
+    const snapshot = this.getObserverSnapshot(target.backendExecutionRef);
+    if (!snapshot) {
+      throw new Error(
+        `Manager loop child session '${target.backendExecutionRef}' is unavailable`,
+      );
+    }
+    return {
+      status: snapshot.childStatus,
+      ...(snapshot.childOutcome ? { outcome: snapshot.childOutcome } : {}),
+      ...(snapshot.childLockDecision ? { lockDecision: snapshot.childLockDecision } : {}),
+      telemetry: snapshot.telemetry,
+    };
   }
 
-  async observe(_context: Context): Promise<ObserveResult> {
-    const target: SteeringTarget = {
-      runId: this.childExecution.runId,
-      childExecutionId: this.childExecution.id,
-      ...(this.childExecution.adapterTarget?.executionId
-        ? { executionId: this.childExecution.adapterTarget.executionId }
-        : {}),
-      ...(this.childExecution.adapterTarget?.branchKey
-        ? { branchKey: this.childExecution.adapterTarget.branchKey }
-        : {}),
-      ...(this.childExecution.adapterTarget?.nodeId
-        ? { nodeId: this.childExecution.adapterTarget.nodeId }
-        : {}),
-    };
-    this.backend.consumeQueuedSteering(target);
-    const snapshot = this.backend.getObserverSnapshot(
-      this.backend.resolveChildExecutionSessionId(this.childExecution),
-    );
-    if (!snapshot) {
-      throw new Error(`Manager loop child session '${this.childExecution.id}' is unavailable`);
+  async steerAttachedExecution(
+    target: AttachedExecutionTarget,
+    message: string,
+    _context: Context,
+  ): Promise<void> {
+    const session = this.sessions.get(target.backendExecutionRef);
+    if (!session) {
+      throw new Error(`Attached execution '${target.backendExecutionRef}' is unavailable`);
     }
-    return snapshot;
+    session.steer(message);
   }
 }

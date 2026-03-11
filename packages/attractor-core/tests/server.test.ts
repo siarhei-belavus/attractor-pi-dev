@@ -596,6 +596,13 @@ describe("HTTP Server: POST /pipelines/{id}/steer", () => {
 
     await restartServer({
       steeringQueue,
+      backend: {
+        async run(_node, _prompt, context) {
+          context.set("internal.current_backend_execution_ref", "child-thread");
+          context.set("internal.last_completed_backend_execution_ref", "child-thread");
+          return "ok";
+        },
+      },
       managerObserverFactory: async () => ({
         observe: async () => {
           await new Promise((resolve) => setTimeout(resolve, 250));
@@ -747,10 +754,10 @@ describe("HTTP Server: recovery hardening for malformed durable JSON", () => {
           "stack.manager_loop.child.id": "run-1:manager:attached-child",
           "stack.manager_loop.child.run_id": "run-1",
           "stack.manager_loop.child.owner_node_id": "manager",
-          "stack.manager_loop.child.source": "attached",
+          "stack.manager_loop.child.kind": "attached_backend_execution",
           "stack.manager_loop.child.autostart": "false",
-          "stack.manager_loop.child.adapter.execution_id": "child-thread",
-          "stack.manager_loop.child.adapter.node_id": "child",
+          "stack.manager_loop.child.attached.backend_execution_ref": "backend-child-ref",
+          "stack.manager_loop.child.attached.node_id": "child",
           "internal.manager_child_execution_id": "run-1:manager:attached-child",
         },
         logs: [],

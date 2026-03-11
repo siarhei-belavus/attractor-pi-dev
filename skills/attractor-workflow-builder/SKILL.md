@@ -38,6 +38,9 @@ When behavior is unclear, verify against:
   - `quality.checks` as a JSON array string
 - Parallel fan-out uses `shape=component`; fan-in uses `shape=tripleoctagon`.
 - Manager supervision is first-class through `shape=house` / `type="stack.manager_loop"`.
+- Manager loops now distinguish:
+  - a core-managed child pipeline via `graph[stack.child_dotfile]`
+  - an attached backend execution via backend capability, not implicit thread/session reuse
 - Variables must come from `graph[vars]`; when `vars` is declared, undeclared `$name` references are validation errors.
 - Context keys are a closed set produced by the engine and handlers. Do not invent `ctx.*` writes or assume arbitrary LLM output becomes routable context.
 - Prompt resolution supports:
@@ -52,6 +55,7 @@ When behavior is unclear, verify against:
 - Use bare identifiers for node IDs; put human-readable text in `label`.
 - Prefer prompt files for long instructions instead of large inline strings.
 - Use `thread_id` and `fidelity` intentionally when multiple LLM stages should share context.
+- Do not treat `thread_id` as a generic execution handle. It is for session reuse only.
 - Use edge `condition` and `weight` for routing; do not rely on unsupported custom routing fields.
 - Keep governance flows deterministic by routing on built-in keys like `outcome`, `human.gate.selected`, `tool.output`, `judge.rubric.*`, or `confidence.gate.*`.
 - Validate after edits, then dry-run with simulation if the workflow shape changed.
@@ -139,6 +143,8 @@ digraph Managed {
 }
 ```
 
+For an attached backend execution, do not try to encode backend handles in DOT attributes. The backend must expose attached execution supervision explicitly; workflow authors only decide whether the manager should supervise a child DOT pipeline or attach to a backend-managed execution exposed at runtime.
+
 ## Validation And Debugging
 
 - Validate structure first:
@@ -147,6 +153,9 @@ digraph Managed {
   - `attractor run workflow.dot --simulate --verbose`
 - Capture backend/tool diagnostics when needed:
   - `attractor run workflow.dot --debug-agent`
+- Expect `--debug-agent` artifacts to split by meaning:
+  - node-level: `<logsRoot>/<nodeId>/system-prompt.md`, `active-tools.json`
+  - thread-level: `<logsRoot>/debug/threads/<sessionKey>/session-events.jsonl`, `latest-snapshot.json`
 - If a route is surprising, check the relevant built-in context key rather than assuming custom state exists.
 
 ## When To Read More

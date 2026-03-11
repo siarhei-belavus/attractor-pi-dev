@@ -414,12 +414,12 @@ describe("Integration: PipelineRunner", () => {
 
     let seenBindingKey = "";
     const managerObserverFactory: ManagerObserverFactory = async ({ context }) => {
-      seenBindingKey = context.getString("internal.last_completed_execution_id");
+      seenBindingKey = context.getString("internal.last_completed_thread_key");
       return {
         observe: async () => ({
           childStatus: "completed",
           childOutcome: "success",
-          telemetry: { thread_key: seenBindingKey },
+          telemetry: { observed_execution_ref: seenBindingKey },
         }),
       };
     };
@@ -429,11 +429,15 @@ describe("Integration: PipelineRunner", () => {
       managerObserverFactory,
     });
 
-    const result = await runner.run(graph);
+    const context = new Context();
+    context.set("internal.last_completed_backend_execution_ref", "backend-child-ref");
+    const result = await runner.run(graph, context);
 
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
     expect(seenBindingKey).toBe("child-thread");
-    expect(result.context.getString("stack.child.telemetry.thread_key")).toBe("child-thread");
+    expect(result.context.getString("stack.child.telemetry.observed_execution_ref")).toBe(
+      "child-thread",
+    );
   });
 
   it("starts and supervises a child pipeline from stack.child_dotfile", async () => {
@@ -511,16 +515,18 @@ describe("Integration: PipelineRunner", () => {
       managerObserverFactory,
     });
 
-    const result = await runner.run(graph);
+    const context = new Context();
+    context.set("internal.last_completed_backend_execution_ref", "backend-child-ref");
+    const result = await runner.run(graph, context);
 
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
     expect(seenChildExecution).toMatchObject({
       id: `${path.basename(tmpDir)}:manager:attached-child`,
       runId: path.basename(tmpDir),
-      source: "attached",
+      kind: "attached_backend_execution",
       autostart: false,
-      adapterTarget: {
-        executionId: "child-thread",
+      attachedTarget: {
+        backendExecutionRef: "backend-child-ref",
         nodeId: "child",
       },
     });
@@ -549,14 +555,14 @@ describe("Integration: PipelineRunner", () => {
         if (observeCalls === 1) {
           return {
             childStatus: "running",
-            telemetry: { session_state: "awaiting_input", thread_key: "child-thread" },
+            telemetry: { lifecycle_state: "awaiting_input", observed_execution_ref: "child-thread" },
           };
         }
         return {
           childStatus: "completed",
           childOutcome: "success",
           childLockDecision: "resolved",
-          telemetry: { session_state: "completed", thread_key: "child-thread" },
+          telemetry: { lifecycle_state: "completed", observed_execution_ref: "child-thread" },
         };
       },
     });
@@ -567,7 +573,9 @@ describe("Integration: PipelineRunner", () => {
       steeringQueue,
     });
 
-    const result = await runner.run(graph);
+    const context = new Context();
+    context.set("internal.last_completed_backend_execution_ref", "backend-child-ref");
+    const result = await runner.run(graph, context);
 
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
     expect(observeCalls).toBe(2);
@@ -612,6 +620,7 @@ describe("Integration: PipelineRunner", () => {
     });
 
     const initialContext = new Context();
+    initialContext.set("internal.last_completed_backend_execution_ref", "backend-child-ref");
     initialContext.set("stack.child.outcome", "success");
     initialContext.set("stack.child.lock_decision", "reopen");
     const result = await runner.run(graph, initialContext);
@@ -626,7 +635,7 @@ describe("Integration: PipelineRunner", () => {
   it("fails manager loop execution when observer wiring is missing", async () => {
     const { graph } = preparePipeline(`
       digraph ManagerLoopMissingObserver {
-        graph [goal="Supervise child"]
+        graph [goal="Supervise child", stack.child_autostart="false"]
         start [shape=Mdiamond]
         exit  [shape=Msquare]
         child [label="Child", prompt="Do the work"]
@@ -636,10 +645,12 @@ describe("Integration: PipelineRunner", () => {
     `);
 
     const runner = new PipelineRunner({ logsRoot: tmpDir });
-    const result = await runner.run(graph);
+    const context = new Context();
+    context.set("internal.last_completed_backend_execution_ref", "backend-child-ref");
+    const result = await runner.run(graph, context);
 
     expect(result.outcome.status).toBe(StageStatus.FAIL);
-    expect(result.outcome.failureReason).toContain("observer wiring is missing");
+    expect(result.outcome.failureReason).toContain("unsupported");
   });
 
   it("variable expansion ($goal) works", () => {

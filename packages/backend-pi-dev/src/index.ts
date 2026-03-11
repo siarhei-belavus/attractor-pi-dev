@@ -2,7 +2,6 @@
 export { PiAgentCodergenBackend } from "./backend.js";
 export type {
   PiAgentBackendOptions,
-  SessionSnapshot,
   PiSessionObserverSnapshot,
 } from "./backend.js";
 

@@ -2,9 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   AnswerValue,
+  type AttachedExecutionSupervisor,
+  type CapableBackend,
   type Interviewer,
   type Question,
-  type ManagerObserverFactory,
   type ObserveResult,
 } from "@attractor/core";
 
@@ -13,7 +14,7 @@ export interface CliTestConfig {
     mode: "wait_once";
     questionId?: string;
   };
-  managerObserver?: {
+  attachedExecutionSupervisor?: {
     observations: ObserveResult[];
   };
   resumeFrom?: string;
@@ -55,22 +56,43 @@ export function createTestInterviewer(
   return new WaitingInterviewer(logsRoot, runId, config.interviewer.questionId ?? "q-0001");
 }
 
-export function createTestManagerObserverFactory(
-  config: CliTestConfig | null,
-): ManagerObserverFactory | undefined {
-  const observations = config?.managerObserver?.observations;
+export function createTestBackend(config: CliTestConfig | null): CapableBackend | null {
+  const observations = config?.attachedExecutionSupervisor?.observations;
   if (!observations || observations.length === 0) {
-    return undefined;
+    return null;
   }
 
   let index = 0;
-  return async () => ({
-    observe: async () => {
+  const supervisor: AttachedExecutionSupervisor = {
+    async observeAttachedExecution() {
       const observation = observations[Math.min(index, observations.length - 1)]!;
       index++;
-      return observation;
+      return {
+        status: observation.childStatus,
+        ...(observation.childOutcome ? { outcome: observation.childOutcome } : {}),
+        ...(observation.childLockDecision
+          ? { lockDecision: observation.childLockDecision }
+          : {}),
+        ...(observation.telemetry ? { telemetry: observation.telemetry } : {}),
+      };
     },
-  });
+    async steerAttachedExecution() {},
+  };
+
+  return {
+    async run(node, _prompt, context) {
+      const backendExecutionRef =
+        context.getString("internal.thread_key") || `${node.id}-backend-ref`;
+      context.set("internal.current_backend_execution_ref", backendExecutionRef);
+      context.set("internal.last_completed_backend_execution_ref", backendExecutionRef);
+      return `[Test backend] ${node.id}`;
+    },
+    getCapabilities: () => ({
+      attachedExecutionSupervision: true,
+      debugTelemetry: false,
+    }),
+    asAttachedExecutionSupervisor: () => supervisor,
+  };
 }
 
 class WaitingInterviewer implements Interviewer {
@@ -110,4 +132,3 @@ class WaitingInterviewer implements Interviewer {
     };
   }
 }
-

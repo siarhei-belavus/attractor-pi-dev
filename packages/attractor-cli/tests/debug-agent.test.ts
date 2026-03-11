@@ -24,27 +24,31 @@ describe("debug agent writer", () => {
 
     writer.writeSnapshot({
       phase: "before_submit",
-      threadKey: "thread-1",
+      sessionKey: "thread-1",
+      nodeId: "work",
       provider: "anthropic",
       modelId: "claude-test",
       activeTools: ["read", "edit"],
-      systemPrompt: "token=secret-value\napi_key=sk-abcdef1234567890",
-      toolPolicyDiagnostics: ["diag"],
+      promptText: "token=secret-value\napi_key=sk-abcdef1234567890",
+      diagnostics: ["diag"],
     });
 
     writer.writeEvent({
       kind: "tool_call_start",
       timestamp: Date.now(),
-      sessionId: "session-1",
       data: {
+        sessionKey: "thread-1",
         authorization: "Bearer very-secret-token",
         plain: "safe",
       },
     });
 
-    const prompt = readFileSync(join(logsRoot, "system-prompt.md"), "utf-8");
-    const tools = readFileSync(join(logsRoot, "active-tools.json"), "utf-8");
-    const thread = readFileSync(join(logsRoot, "agent-thread.jsonl"), "utf-8");
+    const prompt = readFileSync(join(logsRoot, "work", "system-prompt.md"), "utf-8");
+    const tools = readFileSync(join(logsRoot, "work", "active-tools.json"), "utf-8");
+    const thread = readFileSync(
+      join(logsRoot, "debug", "threads", "thread-1", "session-events.jsonl"),
+      "utf-8",
+    );
 
     expect(prompt).toContain("token=secret-value");
     expect(tools).toContain("\"activeTools\"");
@@ -78,21 +82,23 @@ describe("debug agent writer", () => {
       [dotPath, "--logs-dir", logsPath, "--debug-agent"],
       {
         createBackend: (options) => ({
+          getCapabilities: () => ({ debugTelemetry: true }),
           async run() {
-            options.onSessionSnapshot?.({
+            options.debugSink?.writeSnapshot({
               phase: "before_submit",
-              threadKey: "test-thread",
+              sessionKey: "test-thread",
+              nodeId: "work",
               provider: "anthropic",
               modelId: "claude-test",
               activeTools: ["read", "edit"],
-              systemPrompt: "system prompt with api_key=secret-value",
-              toolPolicyDiagnostics: ["diag"],
+              promptText: "system prompt with api_key=secret-value",
+              diagnostics: ["diag"],
             });
-            options.onSessionEvent?.({
+            options.debugSink?.writeEvent({
               kind: "tool_call_start",
               timestamp: Date.now(),
-              sessionId: "session-1",
               data: {
+                sessionKey: "test-thread",
                 authorization: "Bearer should-hide",
               },
             });
@@ -103,13 +109,18 @@ describe("debug agent writer", () => {
       },
     );
 
-    expect(existsSync(join(logsPath, "system-prompt.md"))).toBe(true);
-    expect(existsSync(join(logsPath, "active-tools.json"))).toBe(true);
-    expect(existsSync(join(logsPath, "agent-thread.jsonl"))).toBe(true);
+    expect(existsSync(join(logsPath, "work", "system-prompt.md"))).toBe(true);
+    expect(existsSync(join(logsPath, "work", "active-tools.json"))).toBe(true);
+    expect(
+      existsSync(join(logsPath, "debug", "threads", "test-thread", "session-events.jsonl")),
+    ).toBe(true);
 
-    const prompt = readFileSync(join(logsPath, "system-prompt.md"), "utf-8");
-    const tools = readFileSync(join(logsPath, "active-tools.json"), "utf-8");
-    const thread = readFileSync(join(logsPath, "agent-thread.jsonl"), "utf-8");
+    const prompt = readFileSync(join(logsPath, "work", "system-prompt.md"), "utf-8");
+    const tools = readFileSync(join(logsPath, "work", "active-tools.json"), "utf-8");
+    const thread = readFileSync(
+      join(logsPath, "debug", "threads", "test-thread", "session-events.jsonl"),
+      "utf-8",
+    );
 
     expect(prompt).toContain("system prompt");
     expect(tools).toContain("\"activeTools\"");

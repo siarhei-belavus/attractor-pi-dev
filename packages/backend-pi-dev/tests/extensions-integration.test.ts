@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Context } from "@attractor/core";
 import { PiAgentCodergenBackend, Session, createAnthropicProfile } from "../src/index.js";
 
 function writeExtension(path: string, toolName: string): void {
@@ -77,7 +78,7 @@ describe("extensions integration", () => {
     const snapshots: Array<{
       phase: string;
       activeTools: string[];
-      systemPrompt: string;
+      promptText: string;
     }> = [];
 
     const initializeSpy = vi
@@ -94,12 +95,15 @@ describe("extensions integration", () => {
 
     const backend = new PiAgentCodergenBackend({
       cwd,
-      onSessionSnapshot: (snapshot) => {
-        snapshots.push({
-          phase: snapshot.phase,
-          activeTools: snapshot.activeTools,
-          systemPrompt: snapshot.systemPrompt,
-        });
+      debugSink: {
+        writeEvent() {},
+        writeSnapshot(snapshot) {
+          snapshots.push({
+            phase: snapshot.phase,
+            activeTools: snapshot.activeTools ?? [],
+            promptText: snapshot.promptText ?? "",
+          });
+        },
       },
     });
 
@@ -109,7 +113,7 @@ describe("extensions integration", () => {
         classes: [],
       } as any,
       "hello",
-      {} as any,
+      new Context(),
     );
 
     expect(typeof result).not.toBe("string");
@@ -119,7 +123,7 @@ describe("extensions integration", () => {
     );
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]!.phase).toBe("before_submit");
-    expect(snapshots[0]!.systemPrompt.length).toBeGreaterThan(0);
+    expect(snapshots[0]!.promptText.length).toBeGreaterThan(0);
     expect(snapshots[0]!.activeTools.length).toBeGreaterThan(0);
     await backend.dispose();
   });

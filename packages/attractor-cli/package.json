@@ -21,8 +21,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@attractor/core": "workspace:*",
-    "@attractor/backend-pi-dev": "workspace:*"
+    "@attractor/core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

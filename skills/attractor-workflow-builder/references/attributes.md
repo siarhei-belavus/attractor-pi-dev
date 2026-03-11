@@ -153,8 +153,18 @@ Available in manager loops:
 - `manager.final_cycle`
 - `stack.child.status`
 - `stack.child.outcome`
+- `stack.child.lock_decision`
 - `stack.manager_loop.child.id`
 - `stack.manager_loop.child.run_id`
+- `stack.manager_loop.child.kind`
+
+Available when supervising an attached backend execution:
+- `stack.manager_loop.child.attached.backend_execution_ref`
+- `stack.manager_loop.child.attached.branch_key`
+- `stack.manager_loop.child.attached.node_id`
+
+Available when supervising a managed child pipeline:
+- `stack.manager_loop.child.dotfile`
 
 Available for retry-aware routing:
 - `internal.retry_count.<node_id>`
@@ -189,3 +199,9 @@ Then dry-run behavior:
 
 When debugging prompt or tool activation:
 - `attractor run workflow.dot --debug-agent`
+
+Current debug artifact layout:
+- node-level artifacts go under `<logsRoot>/<nodeId>/`
+- thread/session history goes under `<logsRoot>/debug/threads/<sessionKey>/`
+
+Do not teach or rely on legacy paths like a run-root `system-prompt.md` or `agent-thread.jsonl`.
