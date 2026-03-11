@@ -480,6 +480,8 @@ gate -> next [condition="outcome=success || outcome=partial_success"]
 gate -> skip [condition="!outcome=fail"]
 ```
 
+Failed handler outcomes also mirror `Outcome.failureReason` into `failure.reason`, which allows explicit fail-edge analysis flows such as `failed_stage -> failure.analyze [condition="outcome=fail"]`.
+
 **Human gate routing** (available after `shape=hexagon` nodes):
 
 ```dot

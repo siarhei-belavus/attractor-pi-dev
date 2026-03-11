@@ -311,14 +311,16 @@ describe("Integration: PipelineRunner", () => {
       digraph FailureAnalyzeRoute {
         start [shape=Mdiamond]
         exit  [shape=Msquare]
-        seed [type="seed_failure"]
+        failing [type="fail_stage"]
         analyze [type="failure.analyze", prompt="Classify failure"]
         route [shape=diamond, label="Route"]
         retry [prompt="Retry it"]
         escalate [prompt="Escalate it"]
-        start -> seed -> analyze -> route
+        start -> failing
+        failing -> analyze [condition="outcome=fail"]
         route -> retry [condition="failure.analyze.class=transient"]
         route -> escalate [condition="failure.analyze.class!=transient"]
+        analyze -> route
         retry -> exit
         escalate -> exit
       }
@@ -339,13 +341,11 @@ describe("Integration: PipelineRunner", () => {
         },
       },
     });
-    runner.registerHandler("seed_failure", {
+    runner.registerHandler("fail_stage", {
       async execute() {
         return {
-          status: StageStatus.SUCCESS,
-          contextUpdates: {
-            "failure.reason": "HTTP 503 from upstream",
-          },
+          status: StageStatus.FAIL,
+          failureReason: "HTTP 503 from upstream",
         };
       },
     });
@@ -353,6 +353,7 @@ describe("Integration: PipelineRunner", () => {
     const result = await runner.run(graph);
 
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(result.context.getString("failure.reason")).toBe("HTTP 503 from upstream");
     expect(result.completedNodes).toContain("retry");
     expect(result.completedNodes).not.toContain("escalate");
     expect(result.context.getString("failure.analyze.class")).toBe("transient");

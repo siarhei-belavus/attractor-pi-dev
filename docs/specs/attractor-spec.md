@@ -203,6 +203,8 @@ This implementation also ships four explicit-only built-in handler types. They a
 
 Normal negative outcomes for these handlers are represented as `PARTIAL_SUCCESS` plus normalized context keys so downstream `conditional` nodes can route explicitly. Invalid config, missing required context input, or malformed structured output fail closed with `FAIL`.
 
+When any handler returns `FAIL` with `failureReason`, the runner mirrors that value into `failure.reason` before resolving fail-edge routing. This is the default input contract for `failure.analyze`.
+
 ### 2.9 Chained Edges
 
 Chained edge declarations are syntactic sugar. The statement:

@@ -155,6 +155,9 @@ export class PipelineRunner {
         context.applyUpdates(lastOutcome.contextUpdates as Record<string, unknown>);
       }
       context.set("outcome", lastOutcome.status);
+      if (lastOutcome.failureReason) {
+        context.set("failure.reason", lastOutcome.failureReason);
+      }
       if (lastOutcome.preferredLabel) {
         context.set("preferred_label", lastOutcome.preferredLabel);
       }
@@ -451,6 +454,9 @@ export class PipelineRunner {
         context.applyUpdates(outcome.contextUpdates as Record<string, unknown>);
       }
       context.set("outcome", outcome.status);
+      if (outcome.failureReason) {
+        context.set("failure.reason", outcome.failureReason);
+      }
       if (outcome.preferredLabel) {
         context.set("preferred_label", outcome.preferredLabel);
       }
