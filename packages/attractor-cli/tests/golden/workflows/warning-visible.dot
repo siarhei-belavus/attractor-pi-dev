@@ -1,0 +1,6 @@
+digraph WarningVisible {
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  work
+  start -> work -> exit
+}

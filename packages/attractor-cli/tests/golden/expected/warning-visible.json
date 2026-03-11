@@ -1,20 +1,22 @@
 {
-  "scenario": "conditional-branch-success",
+  "scenario": "warning-visible",
   "cli": {
     "exitCode": 0,
     "stdout": [
-      "Pipeline: ConditionalBranchSuccess",
-      "Goal: Take the passing branch",
-      "Nodes: 6",
-      "Edges: 6",
+      "Pipeline: WarningVisible",
+      "Goal: (none)",
+      "Nodes: 3",
+      "Edges: 2",
       "Mode: simulation",
       "---",
       "---",
       "Result: success",
-      "Completed: start -> plan -> validate -> gate -> exit",
+      "Completed: start -> work -> exit",
       "Logs: <TMP_ROOT>/logs"
     ],
-    "stderr": []
+    "stderr": [
+      "[WARN] [prompt_on_llm_nodes] LLM node 'work' has no prompt and label is the same as ID"
+    ]
   },
   "run": {
     "outcome": {
@@ -24,28 +26,20 @@
     "currentNode": "exit",
     "completedNodes": [
       "start",
-      "plan",
-      "validate",
-      "gate",
+      "work",
       "exit"
     ],
     "waitingForQuestionId": "",
     "keyContext": {
-      "last_stage": "validate",
+      "last_stage": "work",
       "outcome": "success"
     },
     "artifacts": {
       "nodeStatus": {
-        "gate": {
-          "status": "success"
-        },
-        "plan": {
-          "status": "success"
-        },
         "start": {
           "status": "success"
         },
-        "validate": {
+        "work": {
           "status": "success"
         }
       },

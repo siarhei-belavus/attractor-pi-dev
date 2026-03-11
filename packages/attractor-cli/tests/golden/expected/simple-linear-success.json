@@ -11,84 +11,39 @@
       "---",
       "---",
       "Result: success",
-      "Completed: start -> plan -> implement -> exit"
+      "Completed: start -> plan -> implement -> exit",
+      "Logs: <TMP_ROOT>/logs"
     ],
     "stderr": []
   },
   "run": {
-    "manifest": {
-      "goal": "Run a simple linear regression",
-      "name": "SimpleLinearSuccess"
+    "outcome": {
+      "status": "success",
+      "failureReason": ""
     },
-    "checkpoint": {
-      "completedNodes": [
-        "start",
-        "plan",
-        "implement",
-        "exit"
-      ],
-      "context": {
-        "current_node": "exit",
-        "graph.goal": "Run a simple linear regression",
-        "last_response": "[Simulated] Response for stage: implement",
-        "last_stage": "implement",
-        "outcome": "success"
-      },
-      "currentNode": "exit",
-      "nodeOutcomes": {
+    "currentNode": "exit",
+    "completedNodes": [
+      "start",
+      "plan",
+      "implement",
+      "exit"
+    ],
+    "waitingForQuestionId": "",
+    "keyContext": {
+      "last_stage": "implement",
+      "outcome": "success"
+    },
+    "artifacts": {
+      "nodeStatus": {
         "implement": {
-          "contextUpdates": {
-            "last_response": "[Simulated] Response for stage: implement",
-            "last_stage": "implement"
-          },
-          "notes": "Stage completed: implement",
           "status": "success"
         },
         "plan": {
-          "contextUpdates": {
-            "last_response": "[Simulated] Response for stage: plan",
-            "last_stage": "plan"
-          },
-          "notes": "Stage completed: plan",
           "status": "success"
         },
         "start": {
           "status": "success"
         }
-      },
-      "nodeRetries": {},
-      "waitingForQuestionId": ""
-    },
-    "artifacts": {
-      "stageStatus": {
-        "implement": {
-          "context_updates": {
-            "last_response": "[Simulated] Response for stage: implement",
-            "last_stage": "implement"
-          },
-          "notes": "Stage completed: implement",
-          "outcome": "success",
-          "preferred_next_label": "",
-          "suggested_next_ids": []
-        },
-        "plan": {
-          "context_updates": {
-            "last_response": "[Simulated] Response for stage: plan",
-            "last_stage": "plan"
-          },
-          "notes": "Stage completed: plan",
-          "outcome": "success",
-          "preferred_next_label": "",
-          "suggested_next_ids": []
-        }
-      },
-      "prompts": {
-        "implement": "Implement the requested change",
-        "plan": "Make a small plan"
-      },
-      "responses": {
-        "implement": "[Simulated] Response for stage: implement",
-        "plan": "[Simulated] Response for stage: plan"
       },
       "managerLoops": {},
       "questions": {}

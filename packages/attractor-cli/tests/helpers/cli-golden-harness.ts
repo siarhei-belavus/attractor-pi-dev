@@ -17,12 +17,16 @@ export interface GoldenSnapshot {
     stderr: string[];
   };
   run: {
-    manifest: Record<string, unknown> | null;
-    checkpoint: Record<string, unknown> | null;
+    outcome: {
+      status: string;
+      failureReason: string;
+    };
+    currentNode: string;
+    completedNodes: string[];
+    waitingForQuestionId: string;
+    keyContext: Record<string, unknown>;
     artifacts: {
-      stageStatus: Record<string, unknown>;
-      prompts: Record<string, string>;
-      responses: Record<string, string>;
+      nodeStatus: Record<string, unknown>;
       managerLoops: Record<string, unknown>;
       questions: Record<string, unknown>;
     };
@@ -123,6 +127,12 @@ function normalizeSnapshot(input: {
   stdout: string;
   stderr: string;
 }): GoldenSnapshot {
+  const checkpoint = normalizeCheckpoint(
+    path.join(input.logsDir, "checkpoint.json"),
+    input.tempRoot,
+    input.logsDir,
+  );
+
   return {
     scenario: input.scenario,
     cli: {
@@ -130,26 +140,7 @@ function normalizeSnapshot(input: {
       stdout: normalizeOutput(input.stdout, input.tempRoot, input.logsDir),
       stderr: normalizeOutput(input.stderr, input.tempRoot, input.logsDir),
     },
-    run: {
-      manifest: normalizeJsonFile(path.join(input.logsDir, "manifest.json"), input.tempRoot, input.logsDir),
-      checkpoint: normalizeCheckpoint(
-        path.join(input.logsDir, "checkpoint.json"),
-        input.tempRoot,
-        input.logsDir,
-      ),
-      artifacts: {
-        stageStatus: collectStageArtifacts(input.logsDir, "status.json", input.tempRoot, input.logsDir),
-        prompts: collectTextArtifacts(input.logsDir, "prompt.md", input.tempRoot, input.logsDir),
-        responses: collectTextArtifacts(input.logsDir, "response.md", input.tempRoot, input.logsDir),
-        managerLoops: collectStageArtifacts(
-          input.logsDir,
-          "manager_loop.json",
-          input.tempRoot,
-          input.logsDir,
-        ),
-        questions: collectQuestionArtifacts(input.logsDir, input.tempRoot, input.logsDir),
-      },
-    },
+    run: summarizeRun(checkpoint, input.logsDir, input.tempRoot),
   };
 }
 
@@ -170,7 +161,6 @@ function normalizeCheckpoint(
     currentNode: source.currentNode ?? "",
     completedNodes: source.completedNodes ?? [],
     nodeOutcomes: source.nodeOutcomes ?? {},
-    nodeRetries: source.nodeRetries ?? {},
     waitingForQuestionId: source.waitingForQuestionId ?? "",
     context:
       context && typeof context === "object"
@@ -182,44 +172,12 @@ function normalizeCheckpoint(
 function filterContext(context: Record<string, unknown>): Record<string, unknown> {
   const filteredEntries = Object.entries(context)
     .filter(([key]) => !key.startsWith("internal."))
+    .filter(([key]) => key !== "current_node")
+    .filter(([key]) => key !== "graph.goal")
+    .filter(([key]) => key !== "last_response")
+    .filter(([key]) => isStableContextKey(key))
     .sort(([left], [right]) => left.localeCompare(right));
   return Object.fromEntries(filteredEntries.map(([key, value]) => [key, sortValue(value)]));
-}
-
-function collectStageArtifacts(
-  logsDir: string,
-  filename: string,
-  tempRoot: string,
-  runLogsDir: string,
-): Record<string, unknown> {
-  const artifacts: Record<string, unknown> = {};
-  for (const entry of listStageDirectories(logsDir)) {
-    const filePath = path.join(logsDir, entry, filename);
-    if (!fs.existsSync(filePath)) {
-      continue;
-    }
-    artifacts[entry] = normalizeJsonFile(filePath, tempRoot, runLogsDir);
-  }
-  return sortValue(artifacts) as Record<string, unknown>;
-}
-
-function collectTextArtifacts(
-  logsDir: string,
-  filename: string,
-  tempRoot: string,
-  runLogsDir: string,
-): Record<string, string> {
-  const artifacts: Record<string, string> = {};
-  for (const entry of listStageDirectories(logsDir)) {
-    const filePath = path.join(logsDir, entry, filename);
-    if (!fs.existsSync(filePath)) {
-      continue;
-    }
-    artifacts[entry] = normalizeString(fs.readFileSync(filePath, "utf-8"), tempRoot, runLogsDir);
-  }
-  return Object.fromEntries(
-    Object.entries(artifacts).sort(([left], [right]) => left.localeCompare(right)),
-  );
 }
 
 function collectQuestionArtifacts(
@@ -234,7 +192,11 @@ function collectQuestionArtifacts(
 
   const records: Record<string, unknown> = {};
   for (const entry of fs.readdirSync(questionsDir).filter((name) => name.endsWith(".json")).sort()) {
-    records[entry] = normalizeJsonFile(path.join(questionsDir, entry), tempRoot, runLogsDir);
+    const normalized = normalizeJsonFile(path.join(questionsDir, entry), tempRoot, runLogsDir);
+    if (!normalized) {
+      continue;
+    }
+    records[entry] = summarizeQuestion(normalized);
   }
   return sortValue(records) as Record<string, unknown>;
 }
@@ -282,8 +244,7 @@ function normalizeOutput(output: string, tempRoot: string, logsDir: string): str
     .split(/\r?\n/u)
     .map((line) => normalizeString(line, tempRoot, logsDir).trim())
     .filter((line) => line.length > 0)
-    .filter((line) => !line.startsWith("["))
-    .filter((line) => !line.startsWith("Logs:"));
+    .filter((line) => !isTimestampedEventLine(line));
 }
 
 function normalizeString(value: string, tempRoot: string, logsDir: string): string {
@@ -316,6 +277,147 @@ function isTimestampKey(key: string): boolean {
     key.endsWith("_at") ||
     key === "updatedAt"
   );
+}
+
+function summarizeRun(
+  checkpoint: Record<string, unknown> | null,
+  logsDir: string,
+  tempRoot: string,
+): GoldenSnapshot["run"] {
+  const source = (checkpoint ?? {}) as Record<string, unknown>;
+  const context =
+    source.context && typeof source.context === "object"
+      ? (source.context as Record<string, unknown>)
+      : {};
+  const nodeOutcomes =
+    source.nodeOutcomes && typeof source.nodeOutcomes === "object"
+      ? (source.nodeOutcomes as Record<string, unknown>)
+      : {};
+
+  return {
+    outcome: {
+      status: String(context.outcome ?? ""),
+      failureReason: findFailureReason(nodeOutcomes),
+    },
+    currentNode: String(source.currentNode ?? ""),
+    completedNodes: Array.isArray(source.completedNodes)
+      ? source.completedNodes.map((value) => String(value))
+      : [],
+    waitingForQuestionId: String(source.waitingForQuestionId ?? ""),
+    keyContext: context,
+    artifacts: {
+      nodeStatus: summarizeNodeOutcomes(nodeOutcomes),
+      managerLoops: collectManagerLoopArtifacts(logsDir, tempRoot),
+      questions: collectQuestionArtifacts(logsDir, tempRoot, logsDir),
+    },
+  };
+}
+
+function summarizeNodeOutcomes(nodeOutcomes: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(nodeOutcomes)
+      .map(([nodeId, rawOutcome]) => [nodeId, summarizeOutcome(rawOutcome)])
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function summarizeOutcome(rawOutcome: unknown): Record<string, unknown> {
+  const outcome = rawOutcome && typeof rawOutcome === "object"
+    ? (rawOutcome as Record<string, unknown>)
+    : {};
+  const summary: Record<string, unknown> = {
+    status: String(outcome.status ?? ""),
+  };
+  if (typeof outcome.failureReason === "string" && outcome.failureReason.length > 0) {
+    summary.failureReason = outcome.failureReason;
+  }
+  if (Array.isArray(outcome.suggestedNextIds) && outcome.suggestedNextIds.length > 0) {
+    summary.suggestedNextIds = outcome.suggestedNextIds.map((value) => String(value));
+  }
+  if (typeof outcome.preferredLabel === "string" && outcome.preferredLabel.length > 0) {
+    summary.preferredLabel = outcome.preferredLabel;
+  }
+  return summary;
+}
+
+function collectManagerLoopArtifacts(
+  logsDir: string,
+  tempRoot: string,
+): Record<string, unknown> {
+  const artifacts: Record<string, unknown> = {};
+  for (const entry of listStageDirectories(logsDir)) {
+    const filePath = path.join(logsDir, entry, "manager_loop.json");
+    const normalized = normalizeJsonFile(filePath, tempRoot, logsDir);
+    if (!normalized) {
+      continue;
+    }
+    artifacts[entry] = summarizeManagerLoop(normalized);
+  }
+  return sortValue(artifacts) as Record<string, unknown>;
+}
+
+function summarizeManagerLoop(rawArtifact: Record<string, unknown>): Record<string, unknown> {
+  return sortValue({
+    cycleCount: rawArtifact.cycleCount ?? 0,
+    finalChildLockDecision: rawArtifact.finalChildLockDecision ?? "",
+    finalChildOutcome: rawArtifact.finalChildOutcome ?? "",
+    finalChildStatus: rawArtifact.finalChildStatus ?? "",
+    finalFailureReason: rawArtifact.finalFailureReason ?? "",
+    finalStatus: rawArtifact.finalStatus ?? "",
+  }) as Record<string, unknown>;
+}
+
+function summarizeQuestion(rawQuestion: Record<string, unknown>): Record<string, unknown> {
+  const question =
+    rawQuestion.question && typeof rawQuestion.question === "object"
+      ? (rawQuestion.question as Record<string, unknown>)
+      : {};
+  const options = Array.isArray(question.options) ? question.options : [];
+  return sortValue({
+    answerValue:
+      rawQuestion.answer && typeof rawQuestion.answer === "object"
+        ? String((rawQuestion.answer as Record<string, unknown>).value ?? "")
+        : "",
+    options: options.map((option) =>
+      option && typeof option === "object"
+        ? {
+            key: String((option as Record<string, unknown>).key ?? ""),
+            label: String((option as Record<string, unknown>).label ?? ""),
+          }
+        : { key: "", label: "" },
+    ),
+    stage: String(rawQuestion.stage ?? ""),
+    status: String(rawQuestion.status ?? ""),
+    text: String(question.text ?? ""),
+    type: String(question.type ?? ""),
+  }) as Record<string, unknown>;
+}
+
+function findFailureReason(nodeOutcomes: Record<string, unknown>): string {
+  for (const value of Object.values(nodeOutcomes)) {
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+    const failureReason = (value as Record<string, unknown>).failureReason;
+    if (typeof failureReason === "string" && failureReason.length > 0) {
+      return failureReason;
+    }
+  }
+  return "";
+}
+
+function isStableContextKey(key: string): boolean {
+  return (
+    key === "outcome" ||
+    key === "last_stage" ||
+    key.startsWith("human.gate.") ||
+    key.startsWith("parallel.fan_in.") ||
+    key.startsWith("stack.manager_loop.")
+  );
+}
+
+function isTimestampedEventLine(line: string): boolean {
+  return /^\[\d{1,2}:\d{2}:\d{2}(?:\s?[AP]M)?\]/u.test(line);
 }
 
 function resolvePnpmBinary(): string {

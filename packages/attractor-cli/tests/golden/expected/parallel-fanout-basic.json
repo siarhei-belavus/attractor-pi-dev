@@ -11,90 +11,44 @@
       "---",
       "---",
       "Result: success",
-      "Completed: start -> parallel_node -> branch_a -> fan_in -> exit"
+      "Completed: start -> parallel_node -> branch_a -> fan_in -> exit",
+      "Logs: <TMP_ROOT>/logs"
     ],
     "stderr": []
   },
   "run": {
-    "manifest": {
-      "goal": "Run a basic fan-out and fan-in flow",
-      "name": "ParallelFanoutBasic"
+    "outcome": {
+      "status": "success",
+      "failureReason": ""
     },
-    "checkpoint": {
-      "completedNodes": [
-        "start",
-        "parallel_node",
-        "branch_a",
-        "fan_in",
-        "exit"
-      ],
-      "context": {
-        "current_node": "exit",
-        "graph.goal": "Run a basic fan-out and fan-in flow",
-        "last_response": "[Simulated] Response for stage: branch_a",
-        "last_stage": "branch_a",
-        "outcome": "success",
-        "parallel.fan_in.best_outcome": "success",
-        "parallel.results": "[{\"status\":\"success\",\"notes\":\"Stage completed: branch_a\",\"contextUpdates\":{\"last_stage\":\"branch_a\",\"last_response\":\"[Simulated] Response for stage: branch_a\"}},{\"status\":\"success\",\"notes\":\"Stage completed: branch_b\",\"contextUpdates\":{\"last_stage\":\"branch_b\",\"last_response\":\"[Simulated] Response for stage: branch_b\"}}]"
-      },
-      "currentNode": "exit",
-      "nodeOutcomes": {
+    "currentNode": "exit",
+    "completedNodes": [
+      "start",
+      "parallel_node",
+      "branch_a",
+      "fan_in",
+      "exit"
+    ],
+    "waitingForQuestionId": "",
+    "keyContext": {
+      "last_stage": "branch_a",
+      "outcome": "success",
+      "parallel.fan_in.best_outcome": "success"
+    },
+    "artifacts": {
+      "nodeStatus": {
         "branch_a": {
-          "contextUpdates": {
-            "last_response": "[Simulated] Response for stage: branch_a",
-            "last_stage": "branch_a"
-          },
-          "notes": "Stage completed: branch_a",
           "status": "success"
         },
         "fan_in": {
-          "contextUpdates": {
-            "parallel.fan_in.best_outcome": "success"
-          },
-          "notes": "Selected best candidate with status: success",
           "status": "success"
         },
         "parallel_node": {
-          "notes": "All 2 branches succeeded",
           "status": "success"
         },
         "start": {
           "status": "success"
         }
-      },
-      "nodeRetries": {},
-      "waitingForQuestionId": ""
-    },
-    "artifacts": {
-      "stageStatus": {
-        "branch_a": {
-          "context_updates": {
-            "last_response": "[Simulated] Response for stage: branch_a",
-            "last_stage": "branch_a"
-          },
-          "notes": "Stage completed: branch_a",
-          "outcome": "success",
-          "preferred_next_label": "",
-          "suggested_next_ids": []
-        },
-        "branch_b": {
-          "context_updates": {
-            "last_response": "[Simulated] Response for stage: branch_b",
-            "last_stage": "branch_b"
-          },
-          "notes": "Stage completed: branch_b",
-          "outcome": "success",
-          "preferred_next_label": "",
-          "suggested_next_ids": []
-        }
-      },
-      "prompts": {
-        "branch_a": "Handle branch A",
-        "branch_b": "Handle branch B"
-      },
-      "responses": {
-        "branch_a": "[Simulated] Response for stage: branch_a",
-        "branch_b": "[Simulated] Response for stage: branch_b"
       },
       "managerLoops": {},
       "questions": {}
