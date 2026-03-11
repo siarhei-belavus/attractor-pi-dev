@@ -267,6 +267,136 @@ describe("Integration: PipelineRunner", () => {
     expect(result.context.getString("custom.ran")).toBe("true");
   });
 
+  it("routes judge.rubric through confidence.gate into conditional", async () => {
+    const { graph } = preparePipeline(`
+      digraph JudgeConfidence {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        judge [type="judge.rubric", prompt="Evaluate", judge.input_key="artifact.body", judge.threshold="0.8"]
+        confidence [type="confidence.gate", confidence.threshold="0.8"]
+        route [shape=diamond, label="Route"]
+        auto [prompt="Ship it"]
+        human [prompt="Escalate"]
+        start -> judge -> confidence -> route
+        route -> auto [condition="confidence.gate.decision=autonomous"]
+        route -> human [condition="confidence.gate.decision=escalate"]
+        auto -> exit
+        human -> exit
+      }
+    `);
+
+    const ctx = new Context();
+    ctx.set("artifact.body", "Candidate implementation");
+
+    const result = await new PipelineRunner({
+      logsRoot: tmpDir,
+      backend: {
+        async run(node) {
+          if (node.id === "judge") {
+            return JSON.stringify({ score: 0.93, summary: "Approved" });
+          }
+          return "ok";
+        },
+      },
+    }).run(graph, ctx);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(result.completedNodes).toContain("auto");
+    expect(result.completedNodes).not.toContain("human");
+    expect(result.context.getString("confidence.gate.decision")).toBe("autonomous");
+  });
+
+  it("routes failure.analyze into conditional", async () => {
+    const { graph } = preparePipeline(`
+      digraph FailureAnalyzeRoute {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        seed [type="seed_failure"]
+        analyze [type="failure.analyze", prompt="Classify failure"]
+        route [shape=diamond, label="Route"]
+        retry [prompt="Retry it"]
+        escalate [prompt="Escalate it"]
+        start -> seed -> analyze -> route
+        route -> retry [condition="failure.analyze.class=transient"]
+        route -> escalate [condition="failure.analyze.class!=transient"]
+        retry -> exit
+        escalate -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      backend: {
+        async run(node) {
+          if (node.id === "analyze") {
+            return JSON.stringify({
+              class: "transient",
+              summary: "Temporary outage",
+              recommendation: "Retry later",
+            });
+          }
+          return "ok";
+        },
+      },
+    });
+    runner.registerHandler("seed_failure", {
+      async execute() {
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: {
+            "failure.reason": "HTTP 503 from upstream",
+          },
+        };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(result.completedNodes).toContain("retry");
+    expect(result.completedNodes).not.toContain("escalate");
+    expect(result.context.getString("failure.analyze.class")).toBe("transient");
+  });
+
+  it("routes quality.gate into conditional", async () => {
+    const { graph } = preparePipeline(`
+      digraph QualityGateRoute {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        seed [type="seed_quality"]
+        quality [type="quality.gate", quality.checks="[{\\\"label\\\":\\\"tests\\\",\\\"condition\\\":\\\"tests.pass=true\\\"},{\\\"label\\\":\\\"lint\\\",\\\"condition\\\":\\\"lint.pass=true\\\"}]"]
+        route [shape=diamond, label="Route"]
+        continue_path [prompt="Continue"]
+        fix_path [prompt="Fix issues"]
+        start -> seed -> quality -> route
+        route -> continue_path [condition="quality.gate.result=pass"]
+        route -> fix_path [condition="quality.gate.result=fail"]
+        continue_path -> exit
+        fix_path -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+    runner.registerHandler("seed_quality", {
+      async execute() {
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: {
+            "tests.pass": "true",
+            "lint.pass": "false",
+          },
+        };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(result.completedNodes).toContain("fix_path");
+    expect(result.completedNodes).not.toContain("continue_path");
+    expect(result.context.getString("quality.gate.result")).toBe("fail");
+  });
+
   it("wires manager loop observers through PipelineRunner", async () => {
     const { graph } = preparePipeline(`
       digraph ManagerLoop {

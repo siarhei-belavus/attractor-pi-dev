@@ -190,6 +190,19 @@ The `shape` attribute on a node determines which handler executes it, unless ove
 | `parallelogram`   | `tool`                | External tool execution (shell command, API call). |
 | `house`           | `stack.manager_loop`  | Supervisor loop. Orchestrates observe/steer/wait cycles over a child pipeline. |
 
+### 2.8.1 Project Extensions: Explicit Governance Handlers
+
+This implementation also ships four explicit-only built-in handler types. They are extensions over the baseline shape mapping above and must be selected with `type="..."`.
+
+| Type | Purpose | Attrs | Context outputs |
+|------|---------|-------|-----------------|
+| `judge.rubric` | Structured evaluator over an artifact already present in context. | `judge.input_key`, optional `judge.threshold`, optional `judge.criteria` | `judge.rubric.score`, `judge.rubric.summary`, `judge.rubric.result` |
+| `failure.analyze` | Structured classification of prior failure context. | `failure.input_key`, optional `failure.hints` | `failure.analyze.class`, `failure.analyze.summary`, `failure.analyze.recommendation` |
+| `confidence.gate` | Deterministic autonomy gate over normalized rubric/quality/failure signals. | optional `confidence.threshold`, optional `confidence.score_key`, optional `confidence.failure_class_key`, optional `confidence.escalate_classes` | `confidence.gate.decision`, `confidence.gate.score`, `confidence.gate.reason` |
+| `quality.gate` | Deterministic check aggregator for downstream routing. | `quality.checks` JSON array | `quality.gate.result`, `quality.gate.failed_checks`, `quality.gate.summary` |
+
+Normal negative outcomes for these handlers are represented as `PARTIAL_SUCCESS` plus normalized context keys so downstream `conditional` nodes can route explicitly. Invalid config, missing required context input, or malformed structured output fail closed with `FAIL`.
+
 ### 2.9 Chained Edges
 
 Chained edge declarations are syntactic sugar. The statement:

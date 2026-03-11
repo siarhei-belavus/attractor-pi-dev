@@ -123,6 +123,17 @@ The `shape` attribute determines which handler executes the node, unless overrid
 | `parallelogram`   | `tool`                | External tool execution. |
 | `house`           | `stack.manager_loop`  | Supervisor loop over child pipeline. |
 
+## Built-in Explicit Types
+
+These handlers are available only through explicit `type="..."` values in the current implementation.
+
+| Type | Purpose | Key attrs | Key outputs |
+|------|---------|-----------|-------------|
+| `judge.rubric` | Structured rubric evaluation over a context artifact. | `judge.input_key`, `judge.threshold`, `judge.criteria` | `judge.rubric.score`, `judge.rubric.summary`, `judge.rubric.result` |
+| `failure.analyze` | Structured failure classification for downstream routing. | `failure.input_key`, `failure.hints` | `failure.analyze.class`, `failure.analyze.summary`, `failure.analyze.recommendation` |
+| `confidence.gate` | Deterministic autonomy vs escalation decision. | `confidence.threshold`, `confidence.score_key`, `confidence.failure_class_key`, `confidence.escalate_classes` | `confidence.gate.decision`, `confidence.gate.score`, `confidence.gate.reason` |
+| `quality.gate` | Deterministic pass/fail aggregation over configured checks. | `quality.checks` | `quality.gate.result`, `quality.gate.failed_checks`, `quality.gate.summary` |
+
 ## Chained Edges
 
 Chained declarations are syntactic sugar:
@@ -414,6 +425,23 @@ These are set by specific handlers via `context_updates` in their Outcome.
 | Key | Type | Description |
 |-----|------|-------------|
 | `tool.output` | String | stdout from the executed command. |
+
+**Explicit custom governance handlers**:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `judge.rubric.score` | Number | Normalized rubric score in range `[0,1]`. |
+| `judge.rubric.summary` | String | Rubric summary returned by the evaluator. |
+| `judge.rubric.result` | String | Normalized rubric result: `pass` or `revise`. |
+| `failure.analyze.class` | String | Failure class: `transient`, `quality_gap`, `tool_error`, or `spec_mismatch`. |
+| `failure.analyze.summary` | String | Failure analysis summary. |
+| `failure.analyze.recommendation` | String | Recommended next action from the analyzer. |
+| `confidence.gate.decision` | String | Normalized decision: `autonomous` or `escalate`. |
+| `confidence.gate.score` | Number | Score used by the confidence gate after normalization. |
+| `confidence.gate.reason` | String | Deterministic explanation for the gate decision. |
+| `quality.gate.result` | String | Quality gate result: `pass` or `fail`. |
+| `quality.gate.failed_checks` | String | JSON array of failed check labels. |
+| `quality.gate.summary` | String | Human-readable summary of the gate result. |
 
 **Parallel handler** (`shape=component`):
 

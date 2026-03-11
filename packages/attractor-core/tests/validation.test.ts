@@ -112,6 +112,22 @@ describe("Validation", () => {
     expect(typeWarns[0]!.severity).toBe(Severity.WARNING);
   });
 
+  it("accepts built-in custom governance handler types", () => {
+    const diags = buildAndValidate(`
+      digraph G {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        judge [type="judge.rubric"]
+        analyze [type="failure.analyze"]
+        confidence [type="confidence.gate"]
+        quality [type="quality.gate"]
+        start -> judge -> analyze -> confidence -> quality -> exit
+      }
+    `);
+    const typeWarns = diags.filter((d) => d.rule === "type_known");
+    expect(typeWarns.length).toBe(0);
+  });
+
   it("warns on missing prompt on LLM nodes", () => {
     const diags = buildAndValidate(`
       digraph G {

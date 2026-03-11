@@ -103,6 +103,36 @@ Run it: `attractor-pi run pipeline.dot --set epic_id=E-42`
 
 More examples in [`examples/`](examples/).
 
+## Explicit Governance Handlers
+
+`@attractor/core` also includes four explicit built-in handler types for deterministic review and routing flows:
+
+- `judge.rubric` writes `judge.rubric.score`, `judge.rubric.summary`, `judge.rubric.result`
+- `failure.analyze` writes `failure.analyze.class`, `failure.analyze.summary`, `failure.analyze.recommendation`
+- `confidence.gate` writes `confidence.gate.decision`, `confidence.gate.score`, `confidence.gate.reason`
+- `quality.gate` writes `quality.gate.result`, `quality.gate.failed_checks`, `quality.gate.summary`
+
+Example:
+
+```dot
+digraph GovernedFlow {
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    judge [type="judge.rubric", prompt="Review the artifact", judge.input_key="artifact.body", judge.threshold="0.8"]
+    gate  [type="confidence.gate", confidence.threshold="0.8"]
+    route [shape=diamond, label="Route decision"]
+    auto  [prompt="Continue automatically"]
+    human [shape=hexagon, label="Escalate to human"]
+
+    start -> judge -> gate -> route
+    route -> auto  [condition="confidence.gate.decision=autonomous"]
+    route -> human [condition="confidence.gate.decision=escalate"]
+    auto -> exit
+    human -> exit
+}
+```
+
 ## Documentation
 
 - [Language spec](docs/user/language-spec.md) -- full grammar, node shapes, attributes, edge conditions

@@ -7,6 +7,10 @@ import {
   ExitHandler,
   ConditionalHandler,
   CodergenHandler,
+  QualityGateHandler,
+  FailureAnalyzeHandler,
+  JudgeRubricHandler,
+  ConfidenceGateHandler,
   WaitForHumanHandler,
   ParallelHandler,
   FanInHandler,
@@ -36,6 +40,10 @@ export class HandlerRegistry {
     this.register("exit", new ExitHandler());
     this.register("conditional", new ConditionalHandler());
     this.register("codergen", new CodergenHandler(backend));
+    this.register("quality.gate", new QualityGateHandler());
+    this.register("failure.analyze", new FailureAnalyzeHandler(backend));
+    this.register("judge.rubric", new JudgeRubricHandler(backend));
+    this.register("confidence.gate", new ConfidenceGateHandler());
     this.register("wait.human", new WaitForHumanHandler(interviewer));
     this.register("parallel", new ParallelHandler());
     this.register("parallel.fan_in", new FanInHandler(backend));
