@@ -457,16 +457,18 @@ FUNCTION best_by_weight_then_lexical(edges):
 
 Nodes with `goal_gate=true` represent critical stages that must succeed before the pipeline can exit. When the traversal reaches a terminal node (shape=Msquare):
 
-1. Check all visited nodes that have `goal_gate=true`.
-2. If any goal gate node has a non-success outcome (not SUCCESS or PARTIAL_SUCCESS), the pipeline cannot exit.
+1. Check all declared nodes that have `goal_gate=true`.
+2. Treat a goal gate as unsatisfied if it has no recorded outcome, or if its outcome is not SUCCESS or PARTIAL_SUCCESS.
 3. Instead, jump to the `retry_target` of the unsatisfied goal gate node. If that is not set, try `fallback_retry_target`. If that is also not set, try the graph-level `retry_target` and `fallback_retry_target`.
 4. If no retry target exists at any level, the pipeline fails with an error.
 
 ```
 FUNCTION check_goal_gates(graph, node_outcomes):
-    FOR EACH (node_id, outcome) IN node_outcomes:
-        node = graph.nodes[node_id]
+    FOR EACH node IN graph.nodes:
         IF node.goal_gate == true:
+            outcome = node_outcomes[node.id]
+            IF outcome DOES NOT EXIST:
+                RETURN (false, node)
             IF outcome.status NOT IN {SUCCESS, PARTIAL_SUCCESS}:
                 RETURN (false, node)
     RETURN (true, NONE)

@@ -676,16 +676,18 @@ export class PipelineRunner {
     graph: Graph,
     nodeOutcomes: Map<string, Outcome>,
   ): [boolean, GraphNode | null] {
-    for (const [nodeId, outcome] of nodeOutcomes) {
-      const node = graph.nodes.get(nodeId);
-      if (!node) continue;
-      if (node.goalGate) {
-        if (
-          outcome.status !== StageStatus.SUCCESS &&
-          outcome.status !== StageStatus.PARTIAL_SUCCESS
-        ) {
-          return [false, node];
-        }
+    for (const node of graph.nodes.values()) {
+      if (!node.goalGate) {
+        continue;
+      }
+
+      const outcome = nodeOutcomes.get(node.id);
+      if (
+        !outcome ||
+        (outcome.status !== StageStatus.SUCCESS &&
+          outcome.status !== StageStatus.PARTIAL_SUCCESS)
+      ) {
+        return [false, node];
       }
     }
     return [true, null];

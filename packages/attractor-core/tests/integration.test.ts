@@ -167,22 +167,54 @@ describe("Integration: PipelineRunner", () => {
     expect(result.context.getString("graph.goal")).toBe("");
   });
 
-  it("goal gate blocks exit when unsatisfied", async () => {
-    // We need a custom backend that returns FAIL for the goal gate node
+  it("fails exit when a declared goal gate was never visited", async () => {
     const { graph } = preparePipeline(`
-      digraph G {
-        graph [goal="test", retry_target="plan"]
+      digraph MissingGoalGate {
+        graph [goal="test"]
         start [shape=Mdiamond]
         exit  [shape=Msquare]
-        plan  [prompt="Plan", goal_gate=true]
-        start -> plan -> exit
+        chooser [shape=diamond, label="Choose path"]
+        happy_path [prompt="Happy path"]
+        must_run [prompt="Required work", goal_gate=true]
+        start -> chooser
+        chooser -> happy_path [weight=10]
+        chooser -> must_run [weight=5]
+        happy_path -> exit
+        must_run -> exit
       }
     `);
 
-    // With default simulate mode, plan returns SUCCESS, so it passes
     const runner = new PipelineRunner({ logsRoot: tmpDir });
     const result = await runner.run(graph);
+    expect(result.outcome.status).toBe(StageStatus.FAIL);
+    expect(result.outcome.failureReason).toBe("Goal gate unsatisfied and no retry target");
+    expect(result.completedNodes).toContain("happy_path");
+    expect(result.completedNodes).not.toContain("must_run");
+  });
+
+  it("routes to retry_target when exit sees an unvisited goal gate", async () => {
+    const { graph } = preparePipeline(`
+      digraph MissingGoalGateRetry {
+        graph [goal="test"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        chooser [shape=diamond, label="Choose path"]
+        happy_path [prompt="Happy path"]
+        must_run [prompt="Required work", goal_gate=true, retry_target="must_run"]
+        start -> chooser
+        chooser -> happy_path [weight=10]
+        chooser -> must_run [weight=5]
+        happy_path -> exit
+        must_run -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+    const result = await runner.run(graph);
+
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(result.completedNodes).toContain("happy_path");
+    expect(result.completedNodes).toContain("must_run");
   });
 
   it("edge selection: weight breaks ties for unconditional edges", async () => {
@@ -673,6 +705,60 @@ describe("Integration: loop_restart edge attribute", () => {
 
     // Verify loop_restarted event
     expect(events.some((e) => e.type === "loop_restarted")).toBe(true);
+  });
+
+  it("re-runs goal gates after loop_restart clears their outcomes", async () => {
+    const { graph } = preparePipeline(`
+      digraph LoopRestartGoalGate {
+        graph [goal="Retry required work"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        goal [type="goal_tracker", prompt="Required work", goal_gate=true]
+        gate [shape=diamond]
+        start -> goal -> gate
+        gate -> exit [condition="outcome=success"]
+        gate -> goal [condition="outcome!=success", loop_restart=true]
+      }
+    `);
+
+    const goalVisits: number[] = [];
+    let goalExecutionCount = 0;
+    let gateCount = 0;
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+
+    runner.registerHandler("goal_tracker", {
+      async execute(node, ctx, _graph, _logsRoot) {
+        goalExecutionCount++;
+        goalVisits.push(goalExecutionCount);
+        ctx.set("test.goal_execution_count", goalExecutionCount);
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: { last_stage: node.id },
+        };
+      },
+    });
+
+    runner.registerHandler("conditional", {
+      async execute(node, _ctx, _graph, _logsRoot) {
+        gateCount++;
+        if (gateCount === 1) {
+          return {
+            status: StageStatus.FAIL,
+            contextUpdates: { last_stage: node.id },
+          };
+        }
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: { last_stage: node.id },
+        };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(goalVisits).toEqual([1, 2]);
+    expect(result.context.getNumber("test.goal_execution_count")).toBe(2);
   });
 
   it("does not reset retry counters when loop_restart is false", async () => {

@@ -214,7 +214,7 @@ digraph GoalGateExample {
 }
 ```
 
-If the pipeline reaches `exit` but `test` hasn't recorded a SUCCESS, the engine jumps back to `implement` instead of exiting.
+If the pipeline reaches `exit` but `test` has not recorded a `SUCCESS` or `PARTIAL_SUCCESS` yet, the engine jumps back to `implement` instead of exiting. This also applies when routing skipped the `test` node entirely, so declared goal gates cannot be bypassed by taking another branch.
 
 ## 8. External Tool Execution
 

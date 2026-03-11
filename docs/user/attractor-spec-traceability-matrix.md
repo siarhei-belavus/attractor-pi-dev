@@ -17,7 +17,6 @@
 В репозитории уже реализовано ядро Attractor: DOT-парсер, графовая модель, transforms, condition language, stylesheet, основной runner, checkpointing, human gate, parallel/fan-in, tool handler, HTTP server и большой тестовый набор.
 
 Главные расхождения со spec сейчас не в базовом happy path, а в краевых контрактах:
-- `goal_gate` проверяет только уже исполненные goal-gate узлы, а не все объявленные;
 - HTTP API почти совпадает, но нет `GET /pipelines/{id}/questions`;
 - `vars_declared` не проверяет `tool_command` / `pre_hook` / `post_hook`;
 - `auto_status` только парсится, но не применяется;
@@ -28,8 +27,8 @@
 | Spec area / requirement | Status | Evidence | Комментарий |
 |---|---|---|---|
 | `2. DOT DSL Schema` — базовый парсинг, chained edges, defaults, subgraphs, typed attrs | `Partial` | `packages/attractor-core/src/parser/parser.ts:32`, `packages/attractor-core/src/model/builder.ts:1`, `packages/attractor-core/tests/parser.test.ts` | Основной DSL реализован. Но парсер не проверяет EOF после первого `digraph`, поэтому ограничение “one digraph per file” соблюдается нестрого. Также комментарий в коде прямо говорит “be lenient” к обязательным запятым в attr-block. |
-| `3. Pipeline Execution Engine` — основной loop, edge selection, checkpoints, resume, loop_restart | `Partial` | `packages/attractor-core/src/engine/runner.ts:262`, `packages/attractor-core/src/engine/edge-selection.ts:1`, `packages/attractor-core/tests/integration.test.ts`, `packages/attractor-core/tests/parallel-subgraph.test.ts` | Core engine реализован хорошо: stage loop, retries, fidelity, checkpoints, resume, `loop_restart`. Главный пробел: `goal_gate` проверяется только по `nodeOutcomes`, то есть неисполненный `goal_gate=true` узел не блокирует exit (`packages/attractor-core/src/engine/runner.ts:675`). |
-| `3.4 Goal Gate Enforcement` | `Partial` | `packages/attractor-core/src/engine/runner.ts:353`, `packages/attractor-core/src/engine/runner.ts:675` | Если goal-gate узел уже выполнялся, статус учитывается корректно. Но spec требует проверять все goal-gate узлы перед exit, а текущая реализация смотрит только на те, что попали в `nodeOutcomes`. |
+| `3. Pipeline Execution Engine` — основной loop, edge selection, checkpoints, resume, loop_restart | `Implemented` | `packages/attractor-core/src/engine/runner.ts:262`, `packages/attractor-core/src/engine/edge-selection.ts:1`, `packages/attractor-core/tests/integration.test.ts`, `packages/attractor-core/tests/parallel-subgraph.test.ts` | Core engine реализован: stage loop, retries, fidelity, checkpoints, resume, `loop_restart` и exit-time goal-gate enforcement по всем объявленным `goal_gate=true` узлам. |
+| `3.4 Goal Gate Enforcement` | `Implemented` | `packages/attractor-core/src/engine/runner.ts:353`, `packages/attractor-core/src/engine/runner.ts:675`, `packages/attractor-core/tests/integration.test.ts` | Перед exit раннер теперь детерминированно обходит `graph.nodes` и считает gate неудовлетворённым, если outcome отсутствует или имеет статус не `SUCCESS` / `PARTIAL_SUCCESS`. Регрессия на “goal gate не был посещён выбранным маршрутом” и retry-routing покрыта интеграционными тестами. |
 | `3.5–3.7 Retry Logic / Failure Routing` | `Implemented` | `packages/attractor-core/src/engine/runner.ts:517`, `packages/attractor-core/src/engine/retry.ts`, `packages/attractor-core/tests/integration.test.ts` | Ретраи, backoff, jitter, exhaustion и routing по retry-target закрыты. `allow_partial` тоже используется при exhaustion RETRY-outcome. |
 | `4. Node Handlers` — start / exit / codergen / wait.human / conditional / parallel / fan-in / tool | `Partial` | `packages/attractor-core/src/handlers/registry.ts`, `packages/attractor-core/src/handlers/handlers.ts`, `packages/attractor-core/tests/engine.test.ts`, `packages/attractor-core/tests/parallel-subgraph.test.ts` | Все основные handler types есть и покрыты тестами. Частичный статус теперь связан в основном с несовпадением tool hooks с контрактом spec. |
 | `4.11 Manager Loop Handler` | `Implemented` | `packages/attractor-core/src/handlers/handlers.ts`, `packages/attractor-core/src/engine/runner.ts`, `packages/attractor-core/src/server/index.ts`, `packages/backend-pi-dev/src/backend.ts`, `packages/attractor-core/tests/manager-loop.test.ts`, `packages/attractor-core/tests/server.test.ts`, `packages/backend-pi-dev/tests/manager-observer.test.ts` | Manager loop теперь владеет явным child execution, умеет autostart child DOT pipeline через `stack.child_dotfile`, ставит steering в общую queue-first control plane и принимает HTTP/CLI steering без требования live-target discovery. Ограничение остаётся осознанным: queue transport process-local и недолговечный. |
@@ -71,8 +70,7 @@
 
 ## Приоритетный backlog для доведения до spec
 
-1. Исправить `goal_gate` так, чтобы exit сверял все узлы с `goal_gate=true`, а не только уже встреченные в `nodeOutcomes`.
-2. Добить validation parity для `vars_declared` на `tool_command`, `pre_hook`, `post_hook`.
-3. Добавить `GET /pipelines/{id}/questions`, не ломая текущий `pendingQuestion` в status response.
-4. Либо реализовать `auto_status`, либо убрать атрибут из публичной документации/языковой спецификации проекта.
-5. Решить, нужен ли полноценный spec-совместимый `tool_hooks.pre/post` именно для LLM tool calls, а не только для tool-node shell execution.
+1. Добить validation parity для `vars_declared` на `tool_command`, `pre_hook`, `post_hook`.
+2. Добавить `GET /pipelines/{id}/questions`, не ломая текущий `pendingQuestion` в status response.
+3. Либо реализовать `auto_status`, либо убрать атрибут из публичной документации/языковой спецификации проекта.
+4. Решить, нужен ли полноценный spec-совместимый `tool_hooks.pre/post` именно для LLM tool calls, а не только для tool-node shell execution.
