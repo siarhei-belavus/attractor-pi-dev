@@ -273,6 +273,100 @@ describe("Integration: PipelineRunner", () => {
     expect(result.context.getString("stack.child.telemetry.thread_key")).toBe("child-thread");
   });
 
+  it("covers the manager observe/steer lifecycle end-to-end", async () => {
+    const { graph } = preparePipeline(`
+      digraph ManagerLoopLifecycle {
+        graph [goal="Supervise child lifecycle", default_fidelity="full"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        child [label="Child", prompt="Do the work", thread_id="child-thread"]
+        manager [shape=house, label="Manager", manager.steering_message="Focus on finishing cleanly"]
+        start -> child -> manager -> exit
+      }
+    `);
+    graph.getNode("manager").attrs["manager.actions"] = "observe,steer";
+    graph.getNode("manager").attrs["manager.max_cycles"] = "3";
+    graph.getNode("manager").attrs["manager.steer_cooldown_ms"] = "0";
+
+    const steeringMessages: string[] = [];
+    let observeCalls = 0;
+    const managerObserverFactory: ManagerObserverFactory = async () => ({
+      observe: async () => {
+        observeCalls++;
+        if (observeCalls === 1) {
+          return {
+            childStatus: "running",
+            telemetry: { session_state: "awaiting_input", thread_key: "child-thread" },
+          };
+        }
+        return {
+          childStatus: "completed",
+          childOutcome: "success",
+          childLockDecision: "resolved",
+          telemetry: { session_state: "completed", thread_key: "child-thread" },
+        };
+      },
+      steer: async (context, node) => {
+        const message =
+          context.getString("manager.steering_message") ||
+          String(node.attrs["manager.steering_message"] ?? "");
+        steeringMessages.push(message);
+        return { applied: true, notes: "Steering injected" };
+      },
+    });
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      managerObserverFactory,
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(observeCalls).toBe(2);
+    expect(steeringMessages).toEqual(["Focus on finishing cleanly"]);
+    expect(result.context.getString("stack.manager_loop.last_child_status")).toBe("completed");
+    expect(result.context.getString("stack.manager_loop.lock_decision")).toBe("resolved");
+  });
+
+  it("clears stale child outcome and lock state between manager observations", async () => {
+    const { graph } = preparePipeline(`
+      digraph ManagerLoopClearsStaleState {
+        graph [goal="Supervise child lifecycle", default_fidelity="full"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        child [label="Child", prompt="Do the work", thread_id="child-thread"]
+        manager [shape=house, label="Manager"]
+        start -> child -> manager -> exit
+      }
+    `);
+    graph.getNode("manager").attrs["manager.actions"] = "observe";
+    graph.getNode("manager").attrs["manager.max_cycles"] = "1";
+
+    const managerObserverFactory: ManagerObserverFactory = async () => ({
+      observe: async () => ({
+        childStatus: "completed",
+      }),
+      steer: async () => ({ applied: false }),
+    });
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      managerObserverFactory,
+    });
+
+    const initialContext = new Context();
+    initialContext.set("stack.child.outcome", "success");
+    initialContext.set("stack.child.lock_decision", "reopen");
+    const result = await runner.run(graph, initialContext);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(result.context.getString("stack.child.outcome")).toBe("");
+    expect(result.context.getString("stack.child.lock_decision")).toBe("");
+    expect(result.context.getString("stack.manager_loop.last_child_outcome")).toBe("");
+    expect(result.context.getString("stack.manager_loop.last_child_lock")).toBe("");
+  });
+
   it("fails manager loop execution when observer wiring is missing", async () => {
     const { graph } = preparePipeline(`
       digraph ManagerLoopMissingObserver {

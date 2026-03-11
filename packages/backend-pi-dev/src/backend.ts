@@ -54,6 +54,7 @@ export interface SessionSnapshot {
 export interface PiSessionObserverSnapshot {
   childStatus: "running" | "completed" | "failed";
   childOutcome?: "success" | "fail";
+  childLockDecision?: "resolved" | "reopen";
   telemetry: {
     session_state: SessionState;
     awaiting_input: boolean;
@@ -321,10 +322,17 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     };
     const childStatus = this.mapChildStatus(runtime);
     const childOutcome = runtime.terminalOutcome ?? undefined;
+    const childLockDecision =
+      childOutcome === "success"
+        ? "resolved"
+        : childOutcome === "fail"
+          ? "reopen"
+          : undefined;
 
     return {
       childStatus,
       ...(childOutcome ? { childOutcome } : {}),
+      ...(childLockDecision ? { childLockDecision } : {}),
       telemetry: {
         session_state: runtime.state,
         awaiting_input: runtime.awaitingInput,

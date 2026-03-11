@@ -683,6 +683,108 @@ export class ToolHandler implements Handler {
 }
 
 /** Manager loop handler — implements the full observe/steer cycle per spec §4.11 */
+type ManagerAction = "observe" | "steer" | "wait";
+type ManagerLockDecision = "resolved" | "reopen";
+
+interface ManagerCycleSnapshot {
+  cycle: number;
+  childStatus: string;
+  childOutcome: string;
+  childLockDecision: string;
+  steeringApplied: boolean;
+  stopConditionMatched: boolean;
+}
+
+interface ManagerLoopArtifact {
+  nodeId: string;
+  startedAt: string;
+  completedAt: string;
+  actions: ManagerAction[];
+  pollIntervalMs: number;
+  maxCycles: number;
+  stopCondition: string;
+  cycleCount: number;
+  finalStatus: StageStatus;
+  finalChildStatus: string;
+  finalChildOutcome: string;
+  finalChildLockDecision: string;
+  finalFailureReason: string;
+  cycles: ManagerCycleSnapshot[];
+}
+
+function parseManagerActions(raw: unknown): ManagerAction[] {
+  const allowed = new Set<ManagerAction>(["observe", "steer", "wait"]);
+  const values = String(raw ?? "observe,wait")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value): value is ManagerAction => allowed.has(value as ManagerAction));
+  return values.length > 0 ? Array.from(new Set(values)) : ["observe", "wait"];
+}
+
+function parseManagerLockDecision(value: unknown): ManagerLockDecision | "" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "resolved" || normalized === "reopen") {
+    return normalized;
+  }
+  return "";
+}
+
+function normalizeManagerTerminalStatus(
+  childStatus: string,
+  childOutcome: string,
+): StageStatus | null {
+  const normalizedStatus = childStatus.trim().toLowerCase();
+  const normalizedOutcome = childOutcome.trim().toLowerCase();
+
+  if (normalizedStatus === "failed") {
+    return StageStatus.FAIL;
+  }
+  if (normalizedStatus !== "completed") {
+    return null;
+  }
+  if (normalizedOutcome === "success" || normalizedOutcome === "") {
+    return StageStatus.SUCCESS;
+  }
+  if (normalizedOutcome === "partial_success" || normalizedOutcome === "partial") {
+    return StageStatus.PARTIAL_SUCCESS;
+  }
+  if (normalizedOutcome === "retry") {
+    return StageStatus.RETRY;
+  }
+  if (normalizedOutcome === "skipped") {
+    return StageStatus.SKIPPED;
+  }
+  if (normalizedOutcome === "fail" || normalizedOutcome === "failed" || normalizedOutcome === "error") {
+    return StageStatus.FAIL;
+  }
+  return StageStatus.PARTIAL_SUCCESS;
+}
+
+function buildManagerConditionContext(
+  context: Context,
+  cycle: number,
+  maxCycles: number,
+  childStatus: string,
+  childOutcome: string,
+  childLockDecision: string,
+): Context {
+  const synthetic = context.clone();
+  synthetic.applyUpdates({
+    cycle,
+    max_cycles: maxCycles,
+    child_status: childStatus,
+    child_outcome: childOutcome,
+    child_lock_decision: childLockDecision,
+    "stack.manager_loop.current_cycle": cycle,
+    "stack.manager_loop.max_cycles": maxCycles,
+    "stack.manager_loop.last_child_status": childStatus,
+    "stack.manager_loop.last_child_outcome": childOutcome,
+    "stack.manager_loop.last_child_lock": childLockDecision,
+    "stack.manager_loop.lock_decision": childLockDecision,
+  });
+  return synthetic;
+}
+
 export class ManagerLoopHandler implements Handler {
   private observer?: ManagerObserver;
   private observerFactory?: ManagerObserverFactory;
@@ -703,6 +805,10 @@ export class ManagerLoopHandler implements Handler {
     graph: Graph,
     logsRoot: string,
   ): Promise<Outcome> {
+    const stageDir = path.join(logsRoot, node.id);
+    fs.mkdirSync(stageDir, { recursive: true });
+    const artifactPath = path.join(stageDir, "manager_loop.json");
+    const startedAt = new Date().toISOString();
     const maxCycles = parseInt(String(node.attrs["manager.max_cycles"] ?? "1000"), 10);
     const pollIntervalStr = String(node.attrs["manager.poll_interval"] ?? "45s");
     let pollIntervalMs: number;
@@ -712,8 +818,8 @@ export class ManagerLoopHandler implements Handler {
       pollIntervalMs = 45_000;
     }
     const stopCondition = String(node.attrs["manager.stop_condition"] ?? "");
-    const actionsStr = String(node.attrs["manager.actions"] ?? "observe,wait");
-    const actions = new Set(actionsStr.split(",").map((a) => a.trim()).filter(Boolean));
+    const actionsList = parseManagerActions(node.attrs["manager.actions"]);
+    const actions = new Set(actionsList);
     const steerCooldownMs = parseInt(String(node.attrs["manager.steer_cooldown_ms"] ?? String(pollIntervalMs)), 10);
 
     const observer =
@@ -731,9 +837,53 @@ export class ManagerLoopHandler implements Handler {
 
     // Reset steer timer for this execution
     this.lastSteerTime = 0;
+    const cycles: ManagerCycleSnapshot[] = [];
+    let lastChildStatus = "";
+    let lastChildOutcome = "";
+    let lastChildLockDecision = "";
+
+    const finalize = (
+      status: StageStatus,
+      failureReason = "",
+      notes = "",
+      finalCycle = cycles.length,
+    ): Outcome => {
+      const artifact: ManagerLoopArtifact = {
+        nodeId: node.id,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        actions: actionsList,
+        pollIntervalMs,
+        maxCycles,
+        stopCondition,
+        cycleCount: cycles.length,
+        finalStatus: status,
+        finalChildStatus: lastChildStatus,
+        finalChildOutcome: lastChildOutcome,
+        finalChildLockDecision: lastChildLockDecision,
+        finalFailureReason: failureReason,
+        cycles,
+      };
+      fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2));
+      const contextUpdates: Record<string, unknown> = {
+        "manager.final_cycle": finalCycle,
+        "stack.manager_loop.artifact_path": artifactPath,
+        "stack.manager_loop.cycle_count": cycles.length,
+        "stack.manager_loop.last_child_status": lastChildStatus,
+        "stack.manager_loop.last_child_outcome": lastChildOutcome,
+        "stack.manager_loop.last_child_lock": lastChildLockDecision,
+        "stack.manager_loop.lock_decision": lastChildLockDecision,
+      };
+      if (failureReason) {
+        return failOutcome(failureReason, { notes, contextUpdates });
+      }
+      return { status, notes, contextUpdates };
+    };
 
     for (let cycle = 1; cycle <= maxCycles; cycle++) {
       context.set("manager.current_cycle", cycle);
+      context.set("stack.manager_loop.current_cycle", cycle);
+      context.set("stack.manager_loop.max_cycles", maxCycles);
 
       // 1. Observe
       if (actions.has("observe")) {
@@ -743,6 +893,13 @@ export class ManagerLoopHandler implements Handler {
         context.set("stack.child.status", observeResult.childStatus);
         if (observeResult.childOutcome !== undefined) {
           context.set("stack.child.outcome", observeResult.childOutcome);
+        } else {
+          context.delete("stack.child.outcome");
+        }
+        if (observeResult.childLockDecision !== undefined) {
+          context.set("stack.child.lock_decision", observeResult.childLockDecision);
+        } else {
+          context.delete("stack.child.lock_decision");
         }
         if (observeResult.telemetry) {
           for (const [key, value] of Object.entries(observeResult.telemetry)) {
@@ -751,40 +908,98 @@ export class ManagerLoopHandler implements Handler {
         }
       }
 
+      const childStatus = context.getString("stack.child.status");
+      const childOutcome = context.getString("stack.child.outcome");
+      const childLockDecision = parseManagerLockDecision(
+        context.getString("stack.child.lock_decision"),
+      );
+      lastChildStatus = childStatus;
+      lastChildOutcome = childOutcome;
+      lastChildLockDecision = childLockDecision;
+
+      const currentOutcome: Outcome = {
+        status:
+          normalizeManagerTerminalStatus(childStatus, childOutcome) ??
+          StageStatus.SUCCESS,
+      };
+      const stopConditionMatched = stopCondition
+        ? evaluateCondition(
+            stopCondition,
+            currentOutcome,
+            buildManagerConditionContext(
+              context,
+              cycle,
+              maxCycles,
+              childStatus,
+              childOutcome,
+              childLockDecision,
+            ),
+          )
+        : false;
+
+      const terminalStatus = normalizeManagerTerminalStatus(childStatus, childOutcome);
+      const childActive = terminalStatus === null;
+      let steeringApplied = false;
+
       // 2. Steer (with cooldown)
-      if (actions.has("steer") && this.steerCooldownElapsed(steerCooldownMs)) {
-        await observer.steer(context, node);
+      if (
+        childActive &&
+        actions.has("steer") &&
+        this.steerCooldownElapsed(steerCooldownMs)
+      ) {
+        const steerResult = await observer.steer(context, node);
+        steeringApplied = steerResult.applied;
         this.lastSteerTime = Date.now();
       }
+      cycles.push({
+        cycle,
+        childStatus,
+        childOutcome,
+        childLockDecision,
+        steeringApplied,
+        stopConditionMatched,
+      });
 
-      // 3. Evaluate child status
-      const childStatus = context.getString("stack.child.status");
-      if (childStatus === "completed" || childStatus === "failed") {
-        const childOutcome = context.getString("stack.child.outcome");
-        if (childOutcome === "success") {
-          return successOutcome({
-            notes: `Child completed successfully at cycle ${cycle}`,
-            contextUpdates: { "manager.final_cycle": cycle },
-          });
-        }
-        if (childStatus === "failed") {
-          return failOutcome(`Child failed at cycle ${cycle}`, {
-            notes: `Child outcome: ${childOutcome}`,
-            contextUpdates: { "manager.final_cycle": cycle },
-          });
-        }
+      context.set("stack.manager_loop.cycle_count", cycles.length);
+      context.set("stack.manager_loop.last_child_status", lastChildStatus);
+      context.set("stack.manager_loop.last_child_outcome", lastChildOutcome);
+      context.set("stack.manager_loop.last_child_lock", lastChildLockDecision);
+      context.set("stack.manager_loop.lock_decision", lastChildLockDecision);
+
+      // 3. Evaluate stop condition
+      if (stopConditionMatched) {
+        return finalize(
+          currentOutcome.status,
+          childLockDecision === "reopen" ? "Child requested reopen" : "",
+          `Stop condition satisfied at cycle ${cycle}`,
+          cycle,
+        );
       }
 
-      // 4. Evaluate stop condition
-      if (stopCondition) {
-        // We pass a synthetic "current" outcome for the condition evaluator
-        const currentOutcome: Outcome = { status: StageStatus.SUCCESS };
-        if (evaluateCondition(stopCondition, currentOutcome, context)) {
-          return successOutcome({
-            notes: `Stop condition satisfied at cycle ${cycle}`,
-            contextUpdates: { "manager.final_cycle": cycle },
-          });
+      // 4. Evaluate child status
+      if (terminalStatus !== null) {
+        if (childLockDecision === "reopen") {
+          return finalize(
+            StageStatus.FAIL,
+            "Child requested reopen",
+            `Child completed supervision cycle at cycle ${cycle}`,
+            cycle,
+          );
         }
+        if (terminalStatus === StageStatus.FAIL) {
+          return finalize(
+            terminalStatus,
+            `Child failed at cycle ${cycle}`,
+            childOutcome ? `Child outcome: ${childOutcome}` : "",
+            cycle,
+          );
+        }
+        return finalize(
+          terminalStatus,
+          "",
+          `Child completed supervision cycle at cycle ${cycle}`,
+          cycle,
+        );
       }
 
       // 5. Wait
@@ -793,10 +1008,12 @@ export class ManagerLoopHandler implements Handler {
       }
     }
 
-    return failOutcome("Max cycles exceeded", {
-      notes: `Manager loop exhausted ${maxCycles} cycles`,
-      contextUpdates: { "manager.final_cycle": maxCycles },
-    });
+    return finalize(
+      StageStatus.FAIL,
+      "Max cycles exceeded",
+      `Manager loop exhausted ${maxCycles} cycles`,
+      maxCycles,
+    );
   }
 
   private steerCooldownElapsed(cooldownMs: number): boolean {

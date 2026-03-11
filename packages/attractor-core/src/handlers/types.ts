@@ -64,6 +64,7 @@ export interface Interviewer {
 
 /** Child status as seen by the manager observer */
 export type ChildStatus = "running" | "completed" | "failed";
+export type ChildLockDecision = "resolved" | "reopen";
 
 /** Result of an observe() call — telemetry snapshot from the child pipeline */
 export interface ObserveResult {
@@ -71,6 +72,8 @@ export interface ObserveResult {
   childStatus: ChildStatus;
   /** Outcome string from the child (e.g. "success", "fail") when completed/failed */
   childOutcome?: string;
+  /** Optional normalized supervisor decision for the child */
+  childLockDecision?: ChildLockDecision;
   /** Additional telemetry data the observer gathered */
   telemetry?: Record<string, unknown>;
 }

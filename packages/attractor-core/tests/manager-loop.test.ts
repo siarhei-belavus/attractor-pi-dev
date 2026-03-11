@@ -83,7 +83,13 @@ describe("ManagerLoopHandler", () => {
 
       expect(result.status).toBe(StageStatus.SUCCESS);
       expect(result.notes).toContain("cycle 3");
-      expect(result.contextUpdates).toEqual({ "manager.final_cycle": 3 });
+      expect(result.contextUpdates).toMatchObject({
+        "manager.final_cycle": 3,
+        "stack.manager_loop.cycle_count": 3,
+        "stack.manager_loop.last_child_status": "completed",
+        "stack.manager_loop.last_child_outcome": "success",
+        "stack.manager_loop.last_child_lock": "",
+      });
       expect(callCount).toBe(3);
     });
   });
@@ -111,7 +117,11 @@ describe("ManagerLoopHandler", () => {
 
       expect(result.status).toBe(StageStatus.FAIL);
       expect(result.failureReason).toContain("Child failed at cycle 1");
-      expect(result.contextUpdates).toEqual({ "manager.final_cycle": 1 });
+      expect(result.contextUpdates).toMatchObject({
+        "manager.final_cycle": 1,
+        "stack.manager_loop.last_child_status": "failed",
+        "stack.manager_loop.last_child_outcome": "error",
+      });
     });
   });
 
@@ -138,7 +148,10 @@ describe("ManagerLoopHandler", () => {
       expect(result.status).toBe(StageStatus.FAIL);
       expect(result.failureReason).toBe("Max cycles exceeded");
       expect(result.notes).toContain("exhausted 3 cycles");
-      expect(result.contextUpdates).toEqual({ "manager.final_cycle": 3 });
+      expect(result.contextUpdates).toMatchObject({
+        "manager.final_cycle": 3,
+        "stack.manager_loop.cycle_count": 3,
+      });
     });
 
     it("defaults max_cycles to 1000 when not specified", async () => {
@@ -253,6 +266,7 @@ describe("ManagerLoopHandler", () => {
       expect(ctx.getString("stack.child.outcome")).toBe("success");
       expect(ctx.get("stack.child.telemetry.stages_completed")).toBe(5);
       expect(ctx.get("stack.child.telemetry.current_stage")).toBe("build");
+      expect(ctx.getString("stack.manager_loop.last_child_status")).toBe("completed");
     });
 
     it("skips observe when not in actions list", async () => {
@@ -315,8 +329,7 @@ describe("ManagerLoopHandler", () => {
       const result = await handler.execute(node, ctx, stubGraph, stubLogsRoot);
 
       expect(result.status).toBe(StageStatus.SUCCESS);
-      // Steer should have been called on each cycle (cooldown is 0)
-      expect(steerSpy).toHaveBeenCalledTimes(2);
+      expect(steerSpy).toHaveBeenCalledTimes(1);
     });
 
     it("does not call steer when not in actions", async () => {
@@ -425,10 +438,107 @@ describe("ManagerLoopHandler", () => {
       const ctx = new Context();
       const result = await handler.execute(node, ctx, stubGraph, stubLogsRoot);
 
-      // childStatus is "completed" but childOutcome is "partial" (not "success"),
-      // and it's not "failed" either, so the loop continues until max_cycles
+      expect(result.status).toBe(StageStatus.PARTIAL_SUCCESS);
+      expect(result.contextUpdates).toMatchObject({
+        "manager.final_cycle": 1,
+        "stack.manager_loop.last_child_outcome": "partial",
+      });
+    });
+  });
+
+  describe("supervision semantics", () => {
+    it("records lock decisions from observer snapshots", async () => {
+      const observer: ManagerObserver = {
+        observe: async (): Promise<ObserveResult> => ({
+          childStatus: "completed",
+          childOutcome: "success",
+          childLockDecision: "resolved",
+        }),
+        steer: async (): Promise<SteerResult> => ({ applied: false }),
+      };
+
+      const handler = new ManagerLoopHandler();
+      handler.setObserver(observer);
+      const node = makeManagerNode({
+        attrs: {
+          "manager.max_cycles": "3",
+          "manager.actions": "observe",
+        },
+      });
+      const ctx = new Context();
+      const result = await handler.execute(node, ctx, stubGraph, stubLogsRoot);
+
+      expect(result.status).toBe(StageStatus.SUCCESS);
+      expect(result.contextUpdates).toMatchObject({
+        "stack.manager_loop.last_child_lock": "resolved",
+        "stack.manager_loop.lock_decision": "resolved",
+      });
+      expect(ctx.getString("stack.child.lock_decision")).toBe("resolved");
+    });
+
+    it("fails when the child requests reopen", async () => {
+      const observer: ManagerObserver = {
+        observe: async (): Promise<ObserveResult> => ({
+          childStatus: "completed",
+          childOutcome: "success",
+          childLockDecision: "reopen",
+        }),
+        steer: async (): Promise<SteerResult> => ({ applied: false }),
+      };
+
+      const handler = new ManagerLoopHandler();
+      handler.setObserver(observer);
+      const node = makeManagerNode({
+        attrs: {
+          "manager.max_cycles": "3",
+          "manager.actions": "observe",
+        },
+      });
+      const ctx = new Context();
+      const result = await handler.execute(node, ctx, stubGraph, stubLogsRoot);
+
       expect(result.status).toBe(StageStatus.FAIL);
-      expect(result.failureReason).toBe("Max cycles exceeded");
+      expect(result.failureReason).toBe("Child requested reopen");
+    });
+
+    it("clears stale optional observe fields when omitted", async () => {
+      let cycle = 0;
+      const observer: ManagerObserver = {
+        observe: async (): Promise<ObserveResult> => {
+          cycle++;
+          if (cycle === 1) {
+            return {
+              childStatus: "running",
+              childOutcome: "success",
+              childLockDecision: "resolved",
+            };
+          }
+          return {
+            childStatus: "completed",
+          };
+        },
+        steer: async (): Promise<SteerResult> => ({ applied: false }),
+      };
+
+      const handler = new ManagerLoopHandler();
+      handler.setObserver(observer);
+      const node = makeManagerNode({
+        attrs: {
+          "manager.max_cycles": "3",
+          "manager.actions": "observe",
+        },
+      });
+      const ctx = new Context();
+      const result = await handler.execute(node, ctx, stubGraph, stubLogsRoot);
+
+      expect(result.status).toBe(StageStatus.SUCCESS);
+      expect(result.contextUpdates).toMatchObject({
+        "stack.manager_loop.last_child_status": "completed",
+        "stack.manager_loop.last_child_outcome": "",
+        "stack.manager_loop.last_child_lock": "",
+      });
+      expect(ctx.getString("stack.child.outcome")).toBe("");
+      expect(ctx.getString("stack.child.lock_decision")).toBe("");
     });
   });
 });

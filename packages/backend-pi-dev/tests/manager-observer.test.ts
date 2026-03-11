@@ -76,6 +76,32 @@ describe("Pi manager observer integration", () => {
     });
   });
 
+  it("maps terminal success into a resolved lock decision", () => {
+    const backend = new PiAgentCodergenBackend({ reuseSessions: true }) as any;
+    backend.sessions.set("child-thread", {
+      getRuntimeSnapshot: () => ({
+        state: SessionState.CLOSED,
+        awaitingInput: false,
+        lastAssistantText: "All done",
+        messageCount: 5,
+        activeTools: [],
+        toolPolicyDiagnostics: [],
+        turnCount: 3,
+        toolRoundCount: 3,
+        lastActivityAt: 456,
+        terminalOutcome: "success",
+        failureReason: null,
+      }),
+      steer: vi.fn(),
+    });
+
+    expect(backend.getObserverSnapshot("child-thread")).toMatchObject({
+      childStatus: "completed",
+      childOutcome: "success",
+      childLockDecision: "resolved",
+    });
+  });
+
   it("steers a bound session by binding key", async () => {
     const backend = new PiAgentCodergenBackend({ reuseSessions: true }) as any;
     const steerSpy = vi.fn();
