@@ -713,6 +713,85 @@ describe("HTTP Server: recovery hardening for malformed durable JSON", () => {
     );
   });
 
+  it("restores manager-owned child execution for steering after server restart", async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+
+    const run = path.join(tmpLogsRoot, "run-1");
+    fs.mkdirSync(run, { recursive: true });
+    fs.writeFileSync(
+      path.join(run, "run-state.json"),
+      JSON.stringify({
+        runId: "run-1",
+        status: "waiting_for_answer",
+        currentNode: "manager",
+        completedNodes: ["start", "child"],
+        pendingQuestionId: null,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    fs.writeFileSync(
+      path.join(run, "pipeline.dot"),
+      MANAGER_LOOP_DOT,
+    );
+    fs.writeFileSync(
+      path.join(run, "checkpoint.json"),
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        currentNode: "child",
+        completedNodes: ["start", "child"],
+        nodeRetries: {},
+        context: {
+          "graph.goal": "Recovered goal",
+          "stack.manager_loop.child.id": "run-1:manager:attached-child",
+          "stack.manager_loop.child.run_id": "run-1",
+          "stack.manager_loop.child.owner_node_id": "manager",
+          "stack.manager_loop.child.source": "attached",
+          "stack.manager_loop.child.autostart": "false",
+          "stack.manager_loop.child.adapter.execution_id": "child-thread",
+          "stack.manager_loop.child.adapter.node_id": "child",
+          "internal.manager_child_execution_id": "run-1:manager:attached-child",
+        },
+        logs: [],
+        nodeOutcomes: {
+          child: { status: "success" },
+        },
+      }),
+    );
+
+    const steeringQueue = new InMemorySteeringQueue();
+    server = createServer({
+      logsRoot: tmpLogsRoot,
+      steeringQueue,
+    }) as HttpPipelineServer;
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const addr = server.address();
+    if (addr && typeof addr === "object") {
+      baseUrl = `http://127.0.0.1:${addr.port}`;
+    }
+
+    const response = await request("POST", "/pipelines/run-1/steer", {
+      message: "Resume carefully",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.data.delivery).toBe("queued");
+    expect(
+      steeringQueue.peek({
+        runId: "run-1",
+        childExecutionId: "run-1:manager:attached-child",
+      }),
+    ).toMatchObject([
+      {
+        message: "Resume carefully",
+        source: "api",
+      },
+    ]);
+  });
+
   it("malformed run-state.json does not crash server startup", async () => {
     await new Promise<void>((resolve) => {
       server.close(() => resolve());

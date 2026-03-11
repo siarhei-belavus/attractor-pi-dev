@@ -15,6 +15,8 @@ import type {
 import { StageStatus } from "../state/types.js";
 import { Checkpoint } from "../state/checkpoint.js";
 import type { Graph } from "../model/graph.js";
+import { Context } from "../state/context.js";
+import { getManagerChildExecution } from "../manager/child-execution.js";
 import { DurableInterviewer } from "./durable-interviewer.js";
 import { QuestionStore } from "./question-store.js";
 import type { QuestionRecord } from "./question-store.js";
@@ -125,6 +127,12 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       try {
         const checkpoint = Checkpoint.load(run.logsRoot);
         run.context = checkpoint.contextValues;
+        const restoredChildExecution = getManagerChildExecution(
+          Context.fromSnapshot(checkpoint.contextValues),
+        );
+        if (restoredChildExecution) {
+          run.managerChildExecution = restoredChildExecution;
+        }
       } catch {
         // Keep previous in-memory context when checkpoint is malformed.
       }
@@ -331,7 +339,14 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
         run.cancelled = durable.status === "cancelled";
         if (Checkpoint.exists(logsRoot)) {
           try {
-            run.context = Checkpoint.load(logsRoot).contextValues;
+            const checkpoint = Checkpoint.load(logsRoot);
+            run.context = checkpoint.contextValues;
+            const restoredChildExecution = getManagerChildExecution(
+              Context.fromSnapshot(checkpoint.contextValues),
+            );
+            if (restoredChildExecution) {
+              run.managerChildExecution = restoredChildExecution;
+            }
           } catch {
             // Skip broken checkpoint context; run metadata is still recoverable.
           }
