@@ -1,0 +1,14 @@
+digraph HumanGateAutoApprove {
+  graph [goal="Auto-approve a human gate"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  review [shape=hexagon, label="Review changes"]
+  ship_it [label="Ship it", prompt="Ship the approved changes"]
+  rework [label="Rework", prompt="Fix the changes"]
+  start -> review
+  review -> ship_it [label="[A] Approve"]
+  review -> rework [label="[R] Rework"]
+  ship_it -> exit
+  rework -> exit
+}
+

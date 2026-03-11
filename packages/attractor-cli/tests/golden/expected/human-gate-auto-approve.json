@@ -1,0 +1,90 @@
+{
+  "scenario": "human-gate-auto-approve",
+  "cli": {
+    "exitCode": 0,
+    "stdout": [
+      "Pipeline: HumanGateAutoApprove",
+      "Goal: Auto-approve a human gate",
+      "Nodes: 5",
+      "Edges: 5",
+      "Mode: simulation",
+      "---",
+      "---",
+      "Result: success",
+      "Completed: start -> review -> ship_it -> exit"
+    ],
+    "stderr": []
+  },
+  "run": {
+    "manifest": {
+      "goal": "Auto-approve a human gate",
+      "name": "HumanGateAutoApprove"
+    },
+    "checkpoint": {
+      "completedNodes": [
+        "start",
+        "review",
+        "ship_it",
+        "exit"
+      ],
+      "context": {
+        "current_node": "exit",
+        "graph.goal": "Auto-approve a human gate",
+        "human.gate.label": "[A] Approve",
+        "human.gate.selected": "A",
+        "last_response": "[Simulated] Response for stage: ship_it",
+        "last_stage": "ship_it",
+        "outcome": "success"
+      },
+      "currentNode": "exit",
+      "nodeOutcomes": {
+        "review": {
+          "contextUpdates": {
+            "human.gate.label": "[A] Approve",
+            "human.gate.selected": "A",
+            "internal.waiting_for_question_id": ""
+          },
+          "status": "success",
+          "suggestedNextIds": [
+            "ship_it"
+          ]
+        },
+        "ship_it": {
+          "contextUpdates": {
+            "last_response": "[Simulated] Response for stage: ship_it",
+            "last_stage": "ship_it"
+          },
+          "notes": "Stage completed: ship_it",
+          "status": "success"
+        },
+        "start": {
+          "status": "success"
+        }
+      },
+      "nodeRetries": {},
+      "waitingForQuestionId": ""
+    },
+    "artifacts": {
+      "stageStatus": {
+        "ship_it": {
+          "context_updates": {
+            "last_response": "[Simulated] Response for stage: ship_it",
+            "last_stage": "ship_it"
+          },
+          "notes": "Stage completed: ship_it",
+          "outcome": "success",
+          "preferred_next_label": "",
+          "suggested_next_ids": []
+        }
+      },
+      "prompts": {
+        "ship_it": "Ship the approved changes"
+      },
+      "responses": {
+        "ship_it": "[Simulated] Response for stage: ship_it"
+      },
+      "managerLoops": {},
+      "questions": {}
+    }
+  }
+}

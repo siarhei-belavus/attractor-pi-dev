@@ -16,7 +16,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude 'tests/golden/**'",
+    "test:golden": "pnpm build && vitest run tests/golden/golden-regression.test.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

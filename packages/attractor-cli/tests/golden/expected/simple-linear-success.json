@@ -1,0 +1,97 @@
+{
+  "scenario": "simple-linear-success",
+  "cli": {
+    "exitCode": 0,
+    "stdout": [
+      "Pipeline: SimpleLinearSuccess",
+      "Goal: Run a simple linear regression",
+      "Nodes: 4",
+      "Edges: 3",
+      "Mode: simulation",
+      "---",
+      "---",
+      "Result: success",
+      "Completed: start -> plan -> implement -> exit"
+    ],
+    "stderr": []
+  },
+  "run": {
+    "manifest": {
+      "goal": "Run a simple linear regression",
+      "name": "SimpleLinearSuccess"
+    },
+    "checkpoint": {
+      "completedNodes": [
+        "start",
+        "plan",
+        "implement",
+        "exit"
+      ],
+      "context": {
+        "current_node": "exit",
+        "graph.goal": "Run a simple linear regression",
+        "last_response": "[Simulated] Response for stage: implement",
+        "last_stage": "implement",
+        "outcome": "success"
+      },
+      "currentNode": "exit",
+      "nodeOutcomes": {
+        "implement": {
+          "contextUpdates": {
+            "last_response": "[Simulated] Response for stage: implement",
+            "last_stage": "implement"
+          },
+          "notes": "Stage completed: implement",
+          "status": "success"
+        },
+        "plan": {
+          "contextUpdates": {
+            "last_response": "[Simulated] Response for stage: plan",
+            "last_stage": "plan"
+          },
+          "notes": "Stage completed: plan",
+          "status": "success"
+        },
+        "start": {
+          "status": "success"
+        }
+      },
+      "nodeRetries": {},
+      "waitingForQuestionId": ""
+    },
+    "artifacts": {
+      "stageStatus": {
+        "implement": {
+          "context_updates": {
+            "last_response": "[Simulated] Response for stage: implement",
+            "last_stage": "implement"
+          },
+          "notes": "Stage completed: implement",
+          "outcome": "success",
+          "preferred_next_label": "",
+          "suggested_next_ids": []
+        },
+        "plan": {
+          "context_updates": {
+            "last_response": "[Simulated] Response for stage: plan",
+            "last_stage": "plan"
+          },
+          "notes": "Stage completed: plan",
+          "outcome": "success",
+          "preferred_next_label": "",
+          "suggested_next_ids": []
+        }
+      },
+      "prompts": {
+        "implement": "Implement the requested change",
+        "plan": "Make a small plan"
+      },
+      "responses": {
+        "implement": "[Simulated] Response for stage: implement",
+        "plan": "[Simulated] Response for stage: plan"
+      },
+      "managerLoops": {},
+      "questions": {}
+    }
+  }
+}

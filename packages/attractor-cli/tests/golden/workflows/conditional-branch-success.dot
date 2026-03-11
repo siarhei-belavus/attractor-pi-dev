@@ -1,0 +1,14 @@
+digraph ConditionalBranchSuccess {
+  graph [goal="Take the passing branch"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  plan [label="Plan", prompt="Plan the work"]
+  validate [label="Validate", prompt="Validate the result"]
+  gate [shape=diamond, label="Validation passed?"]
+  retry_work [label="Retry", prompt="Retry the work"]
+  start -> plan -> validate -> gate
+  gate -> exit [label="Yes", condition="outcome=success"]
+  gate -> retry_work [label="No", condition="outcome!=success"]
+  retry_work -> exit
+}
+

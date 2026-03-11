@@ -1,0 +1,9 @@
+digraph SimpleLinearSuccess {
+  graph [goal="Run a simple linear regression"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  plan [label="Plan", prompt="Make a small plan"]
+  implement [label="Implement", prompt="Implement the requested change"]
+  start -> plan -> implement -> exit
+}
+

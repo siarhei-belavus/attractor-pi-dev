@@ -1,0 +1,16 @@
+digraph ParallelFanoutBasic {
+  graph [goal="Run a basic fan-out and fan-in flow"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  parallel_node [shape=component, label="Fan Out", join_policy="wait_all"]
+  branch_a [label="Branch A", prompt="Handle branch A"]
+  branch_b [label="Branch B", prompt="Handle branch B"]
+  fan_in [shape=tripleoctagon, label="Fan In"]
+  start -> parallel_node
+  parallel_node -> branch_a
+  parallel_node -> branch_b
+  branch_a -> fan_in
+  branch_b -> fan_in
+  fan_in -> exit
+}
+
