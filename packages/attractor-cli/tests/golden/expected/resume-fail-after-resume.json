@@ -21,7 +21,7 @@
   "run": {
     "outcome": {
       "status": "fail",
-      "failureReason": "failed before checkpoint"
+      "failureReason": "No tool_command specified"
     },
     "currentNode": "exit",
     "completedNodes": [

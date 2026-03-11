@@ -23,4 +23,11 @@ describe("cli golden harness", () => {
     );
     expect(snapshot.cli.stdout.some((line) => /^\[\d{1,2}:\d{2}:\d{2}/u.test(line))).toBe(false);
   }, 30_000);
+
+  it("uses the terminal failure reason after resume instead of stale checkpoint history", async () => {
+    const snapshot = await runGoldenScenario("resume-fail-after-resume");
+
+    expect(snapshot.cli.stderr).toContain("Failure: No tool_command specified");
+    expect(snapshot.run.outcome.failureReason).toBe("No tool_command specified");
+  }, 30_000);
 });

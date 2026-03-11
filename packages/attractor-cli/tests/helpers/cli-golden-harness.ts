@@ -350,16 +350,24 @@ function summarizeRun(
     source.nodeOutcomes && typeof source.nodeOutcomes === "object"
       ? (source.nodeOutcomes as Record<string, unknown>)
       : {};
+  const completedNodes = Array.isArray(source.completedNodes)
+    ? source.completedNodes.map((value) => String(value))
+    : [];
+  const currentNode = String(source.currentNode ?? "");
+  const outcomeStatus = String(context.outcome ?? "");
 
   return {
     outcome: {
-      status: String(context.outcome ?? ""),
-      failureReason: findFailureReason(nodeOutcomes),
+      status: outcomeStatus,
+      failureReason: findFailureReason({
+        outcomeStatus,
+        currentNode,
+        completedNodes,
+        nodeOutcomes,
+      }),
     },
-    currentNode: String(source.currentNode ?? ""),
-    completedNodes: Array.isArray(source.completedNodes)
-      ? source.completedNodes.map((value) => String(value))
-      : [],
+    currentNode,
+    completedNodes,
     waitingForQuestionId: String(source.waitingForQuestionId ?? ""),
     keyContext: context,
     artifacts: {
@@ -450,8 +458,33 @@ function summarizeQuestion(rawQuestion: Record<string, unknown>): Record<string,
   }) as Record<string, unknown>;
 }
 
-function findFailureReason(nodeOutcomes: Record<string, unknown>): string {
-  for (const value of Object.values(nodeOutcomes)) {
+function findFailureReason(input: {
+  outcomeStatus: string;
+  currentNode: string;
+  completedNodes: string[];
+  nodeOutcomes: Record<string, unknown>;
+}): string {
+  if (input.outcomeStatus !== "fail") {
+    return "";
+  }
+
+  const preferredNodeIds = [
+    input.currentNode,
+    ...[...input.completedNodes].reverse(),
+  ].filter((nodeId, index, all) => nodeId.length > 0 && all.indexOf(nodeId) === index);
+
+  for (const nodeId of preferredNodeIds) {
+    const outcome = input.nodeOutcomes[nodeId];
+    if (!outcome || typeof outcome !== "object") {
+      continue;
+    }
+    const failureReason = (outcome as Record<string, unknown>).failureReason;
+    if (typeof failureReason === "string" && failureReason.length > 0) {
+      return failureReason;
+    }
+  }
+
+  for (const value of Object.values(input.nodeOutcomes)) {
     if (!value || typeof value !== "object") {
       continue;
     }
@@ -460,6 +493,7 @@ function findFailureReason(nodeOutcomes: Record<string, unknown>): string {
       return failureReason;
     }
   }
+
   return "";
 }
 
