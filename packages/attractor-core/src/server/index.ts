@@ -9,14 +9,16 @@ import type { PipelineEvent, EventListener } from "../events/index.js";
 import type {
   Answer,
   CodergenBackend,
-  ManagerChildExecution,
   ManagerObserverFactory,
 } from "../handlers/types.js";
 import { StageStatus } from "../state/types.js";
 import { Checkpoint } from "../state/checkpoint.js";
 import type { Graph } from "../model/graph.js";
 import { Context } from "../state/context.js";
-import { getManagerChildExecution } from "../manager/child-execution.js";
+import {
+  getManagerChildExecution,
+  type ManagerChildExecution,
+} from "../manager/child-execution.js";
 import { DurableInterviewer } from "./durable-interviewer.js";
 import { QuestionStore } from "./question-store.js";
 import type { QuestionRecord } from "./question-store.js";
