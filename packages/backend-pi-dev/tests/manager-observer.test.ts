@@ -210,4 +210,14 @@ describe("Pi manager observer integration", () => {
       }),
     ).toEqual([]);
   });
+
+  it("does not advertise attached supervision when session reuse is disabled", () => {
+    const backend = new PiAgentCodergenBackend({ reuseSessions: false });
+
+    expect(backend.getCapabilities()).toMatchObject({
+      debugTelemetry: true,
+      attachedExecutionSupervision: false,
+    });
+    expect(backend.asAttachedExecutionSupervisor()).toBeNull();
+  });
 });

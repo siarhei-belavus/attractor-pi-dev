@@ -329,12 +329,12 @@ export class PiAgentCodergenBackend
   getCapabilities() {
     return {
       debugTelemetry: true,
-      attachedExecutionSupervision: true,
+      attachedExecutionSupervision: this.options.reuseSessions,
     };
   }
 
-  asAttachedExecutionSupervisor(): AttachedExecutionSupervisor {
-    return this;
+  asAttachedExecutionSupervisor(): AttachedExecutionSupervisor | null {
+    return this.options.reuseSessions ? this : null;
   }
 
   getObserverSnapshot(bindingKey: string): PiSessionObserverSnapshot | null {
