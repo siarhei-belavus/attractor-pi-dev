@@ -23,8 +23,8 @@ attractor run <file.dot> [options]
 | `--simulate`          | Run in simulation mode (no LLM calls). Stages return canned responses. |
 | `--auto-approve`      | Auto-approve all human gates (selects the first option). |
 | `--logs-dir <path>`   | Output directory for logs and checkpoints. Default: `.attractor-runs/<timestamp>`. |
-| `--provider <name>`   | LLM provider. Default: `anthropic`. |
-| `--model <id>`        | LLM model ID. Default: `claude-sonnet-4-5-20250929`. |
+| `--provider <name>`   | LLM provider. Default: packaged pi settings, else `anthropic`. |
+| `--model <id>`        | LLM model ID. Default: packaged pi settings, else `claude-sonnet-4-5-20250929`. |
 | `--debug-agent`       | When supported by the configured backend, write redacted debug telemetry into node and thread debug artifacts. |
 | `--set <key=value>`   | Set a pipeline variable. Repeatable. Overrides defaults from `graph[vars]`. |
 | `--verbose`           | Show detailed event output (checkpoint saves, stage completions, agent events). |
