@@ -5,6 +5,7 @@ import {
   JudgeRubricHandler,
   QualityGateHandler,
 } from "../src/handlers/handlers.js";
+import { GOVERNANCE_CONTEXT_KEYS } from "../src/handlers/governance-contract.js";
 import { Context } from "../src/state/context.js";
 import { StageStatus } from "../src/state/types.js";
 import type { Graph, GraphNode } from "../src/model/graph.js";
@@ -79,9 +80,9 @@ describe("JudgeRubricHandler", () => {
 
     expect(outcome.status).toBe(StageStatus.SUCCESS);
     expect(outcome.contextUpdates).toEqual({
-      "judge.rubric.score": 0.91,
-      "judge.rubric.summary": "Looks solid",
-      "judge.rubric.result": "pass",
+      [GOVERNANCE_CONTEXT_KEYS.judgeRubric.score]: 0.91,
+      [GOVERNANCE_CONTEXT_KEYS.judgeRubric.summary]: "Looks solid",
+      [GOVERNANCE_CONTEXT_KEYS.judgeRubric.result]: "pass",
     });
   });
 
@@ -134,9 +135,9 @@ describe("FailureAnalyzeHandler", () => {
 
     expect(outcome.status).toBe(StageStatus.SUCCESS);
     expect(outcome.contextUpdates).toEqual({
-      "failure.analyze.class": "transient",
-      "failure.analyze.summary": "Network timeout",
-      "failure.analyze.recommendation": "Retry after backoff",
+      [GOVERNANCE_CONTEXT_KEYS.failureAnalyze.failureClass]: "transient",
+      [GOVERNANCE_CONTEXT_KEYS.failureAnalyze.summary]: "Network timeout",
+      [GOVERNANCE_CONTEXT_KEYS.failureAnalyze.recommendation]: "Retry after backoff",
     });
   });
 
@@ -181,9 +182,10 @@ describe("ConfidenceGateHandler", () => {
 
     expect(outcome.status).toBe(StageStatus.PARTIAL_SUCCESS);
     expect(outcome.contextUpdates).toEqual({
-      "confidence.gate.decision": "escalate",
-      "confidence.gate.score": 0.82,
-      "confidence.gate.reason": "failure class 'tool_error' requires escalation",
+      [GOVERNANCE_CONTEXT_KEYS.confidenceGate.decision]: "escalate",
+      [GOVERNANCE_CONTEXT_KEYS.confidenceGate.score]: 0.82,
+      [GOVERNANCE_CONTEXT_KEYS.confidenceGate.reason]:
+        "failure class 'tool_error' requires escalation",
     });
   });
 });
@@ -209,9 +211,9 @@ describe("QualityGateHandler", () => {
 
     expect(outcome.status).toBe(StageStatus.PARTIAL_SUCCESS);
     expect(outcome.contextUpdates).toEqual({
-      "quality.gate.result": "fail",
-      "quality.gate.failed_checks": JSON.stringify(["lint"]),
-      "quality.gate.summary": "Failed checks: lint",
+      [GOVERNANCE_CONTEXT_KEYS.qualityGate.result]: "fail",
+      [GOVERNANCE_CONTEXT_KEYS.qualityGate.failedChecks]: JSON.stringify(["lint"]),
+      [GOVERNANCE_CONTEXT_KEYS.qualityGate.summary]: "Failed checks: lint",
     });
   });
 

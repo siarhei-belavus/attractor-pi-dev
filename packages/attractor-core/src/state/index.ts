@@ -3,3 +3,4 @@ export * from "./context.js";
 export * from "./checkpoint.js";
 export * from "./artifact-store.js";
 export * from "./fidelity.js";
+export * from "./outcome-runtime.js";

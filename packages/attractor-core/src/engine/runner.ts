@@ -5,6 +5,7 @@ import { Context } from "../state/context.js";
 import { Checkpoint } from "../state/checkpoint.js";
 import type { Outcome } from "../state/types.js";
 import { StageStatus, failOutcome } from "../state/types.js";
+import { applyOutcomeRuntimeContext } from "../state/outcome-runtime.js";
 import { resolveEffectiveFidelity, resolveThreadKey } from "../state/fidelity.js";
 import { EventEmitter, type PipelineEvent } from "../events/index.js";
 import { HandlerRegistry } from "../handlers/registry.js";
@@ -154,13 +155,7 @@ export class PipelineRunner {
       if (lastOutcome.contextUpdates) {
         context.applyUpdates(lastOutcome.contextUpdates as Record<string, unknown>);
       }
-      context.set("outcome", lastOutcome.status);
-      if (lastOutcome.failureReason) {
-        context.set("failure.reason", lastOutcome.failureReason);
-      }
-      if (lastOutcome.preferredLabel) {
-        context.set("preferred_label", lastOutcome.preferredLabel);
-      }
+      applyOutcomeRuntimeContext(context, lastOutcome);
       context.set("internal.last_completed_execution_id", executionId);
       context.set("internal.last_completed_node_id", currentNode.id);
       const currentBranchKey = context.getString("internal.current_branch_key");
@@ -453,13 +448,7 @@ export class PipelineRunner {
       if (outcome.contextUpdates) {
         context.applyUpdates(outcome.contextUpdates as Record<string, unknown>);
       }
-      context.set("outcome", outcome.status);
-      if (outcome.failureReason) {
-        context.set("failure.reason", outcome.failureReason);
-      }
-      if (outcome.preferredLabel) {
-        context.set("preferred_label", outcome.preferredLabel);
-      }
+      applyOutcomeRuntimeContext(context, outcome);
 
       // Waiting for human input: persist and stop execution without
       // marking the current node as completed.
