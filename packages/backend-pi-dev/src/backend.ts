@@ -14,7 +14,8 @@ import type {
   ManagerObserverFactory,
   ManagerObserverFactoryInput,
   ObserveResult,
-  SteerResult,
+  SteeringQueue,
+  SteeringTarget,
 } from "@attractor/core";
 import { StageStatus } from "@attractor/core";
 import {
@@ -99,6 +100,8 @@ export interface PiAgentBackendOptions {
   onWarning?: (message: string) => void;
   /** Session snapshot listener (for debug artifacts) */
   onSessionSnapshot?: (snapshot: SessionSnapshot) => void;
+  /** Shared steering queue used by manager/API/CLI producers and backend consumers */
+  steeringQueue?: SteeringQueue;
 }
 
 /**
@@ -198,6 +201,7 @@ export class PiAgentCodergenBackend implements CodergenBackend {
       };
     }
 
+    this.consumeQueuedSteering(this.resolveTargetFromContext(context), session);
     this.emitSessionSnapshot("before_submit", session, threadKey, provider, modelId);
 
     // Send prompt and wait for completion
@@ -300,15 +304,6 @@ export class PiAgentCodergenBackend implements CodergenBackend {
     return (input) => new PiManagerObserver(this, input);
   }
 
-  async steer(bindingKey: string, message: string): Promise<SteerResult> {
-    const session = this.sessions.get(bindingKey);
-    if (!session) {
-      return { applied: false, notes: `No session found for binding key '${bindingKey}'` };
-    }
-    session.steer(message);
-    return { applied: true, notes: `Steering delivered to '${bindingKey}'` };
-  }
-
   getObserverSnapshot(bindingKey: string): PiSessionObserverSnapshot | null {
     const session = this.sessions.get(bindingKey);
     if (!session) {
@@ -392,38 +387,70 @@ export class PiAgentCodergenBackend implements CodergenBackend {
       toolPolicyDiagnostics: session.getToolPolicyDiagnostics(),
     });
   }
+
+  consumeQueuedSteering(target: SteeringTarget | null, sessionOverride?: { steer: (message: string) => void }): string[] {
+    if (!target || !this.options.steeringQueue) {
+      return [];
+    }
+
+    const session = sessionOverride ?? (
+      target.executionId ? this.sessions.get(target.executionId) : undefined
+    );
+    if (!session) {
+      return [];
+    }
+
+    const messages = this.options.steeringQueue.drain(target);
+    for (const message of messages) {
+      session.steer(message.message);
+    }
+    return messages.map((message) => message.message);
+  }
+
+  private resolveTargetFromContext(context: Context): SteeringTarget | null {
+    const runId = context.getString("internal.run_id");
+    const executionId = context.getString("internal.current_execution_id");
+    if (!runId || !executionId) {
+      return null;
+    }
+
+    const branchKey = context.getString("internal.current_branch_key");
+    return {
+      runId,
+      executionId,
+      ...(branchKey ? { branchKey } : {}),
+    };
+  }
 }
 
 class PiManagerObserver implements ManagerObserver {
-  private readonly bindingKey: string;
+  private readonly executionId: string;
+  private readonly target: SteeringTarget;
 
   constructor(
     private readonly backend: PiAgentCodergenBackend,
     input: ManagerObserverFactoryInput,
   ) {
-    const bindingKey = input.context.getString("internal.last_completed_thread_key");
-    if (!bindingKey) {
-      throw new Error("Manager loop child binding key is missing");
+    const runId = input.context.getString("internal.run_id");
+    const executionId = input.context.getString("internal.last_completed_execution_id");
+    if (!runId || !executionId) {
+      throw new Error("Manager loop child execution target is missing");
     }
-    this.bindingKey = bindingKey;
+    this.executionId = executionId;
+    const branchKey = input.context.getString("internal.last_completed_branch_key");
+    this.target = {
+      runId,
+      executionId,
+      ...(branchKey ? { branchKey } : {}),
+    };
   }
 
   async observe(_context: Context): Promise<ObserveResult> {
-    const snapshot = this.backend.getObserverSnapshot(this.bindingKey);
+    this.backend.consumeQueuedSteering(this.target);
+    const snapshot = this.backend.getObserverSnapshot(this.executionId);
     if (!snapshot) {
-      throw new Error(`Manager loop child session '${this.bindingKey}' is unavailable`);
+      throw new Error(`Manager loop child session '${this.executionId}' is unavailable`);
     }
     return snapshot;
-  }
-
-  async steer(context: Context, node: GraphNode): Promise<SteerResult> {
-    const message =
-      context.getString("manager.steering_message") ||
-      context.getString("stack.manager.steering_message") ||
-      String(node.attrs["manager.steering_message"] ?? "").trim();
-    if (!message) {
-      return { applied: false, notes: "No steering message available" };
-    }
-    return this.backend.steer(this.bindingKey, message);
   }
 }

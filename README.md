@@ -118,7 +118,7 @@ This implementation covers the core execution engine, parser, validation, and al
 
 The spec checklists in [`docs/specs/`](docs/specs/) track what is and is not done.
 
-Manager loops now work end-to-end when the runtime is backed by `@attractor/backend-pi-dev`. The manager binds to the last completed child thread key, observes that live pi session, and accepts steering through both `POST /pipelines/{id}/steer` and `attractor-pi steer <run-id> --message "..."`
+Manager loops now work end-to-end when the runtime is backed by `@attractor/backend-pi-dev`. Manager, CLI, and HTTP steering all enqueue process-local in-memory steering messages. The pi backend consumes those messages against the active execution when available, and queued steering is intentionally ephemeral across process restart or resume.
 
 This implementation adds:
 

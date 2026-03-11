@@ -6,6 +6,7 @@ import { preparePipeline, parseAndBuild } from "../src/engine/pipeline.js";
 import { PipelineRunner } from "../src/engine/runner.js";
 import { Context } from "../src/state/context.js";
 import { StageStatus } from "../src/state/types.js";
+import { InMemorySteeringQueue } from "../src/steering/queue.js";
 import { validate, Severity } from "../src/validation/index.js";
 import type { PipelineEvent } from "../src/events/index.js";
 import { AutoApproveInterviewer, QueueInterviewer } from "../src/handlers/interviewers.js";
@@ -250,14 +251,13 @@ describe("Integration: PipelineRunner", () => {
 
     let seenBindingKey = "";
     const managerObserverFactory: ManagerObserverFactory = async ({ context }) => {
-      seenBindingKey = context.getString("internal.last_completed_thread_key");
+      seenBindingKey = context.getString("internal.last_completed_execution_id");
       return {
         observe: async () => ({
           childStatus: "completed",
           childOutcome: "success",
           telemetry: { thread_key: seenBindingKey },
         }),
-        steer: async () => ({ applied: false }),
       };
     };
 
@@ -288,7 +288,7 @@ describe("Integration: PipelineRunner", () => {
     graph.getNode("manager").attrs["manager.max_cycles"] = "3";
     graph.getNode("manager").attrs["manager.steer_cooldown_ms"] = "0";
 
-    const steeringMessages: string[] = [];
+    const steeringQueue = new InMemorySteeringQueue();
     let observeCalls = 0;
     const managerObserverFactory: ManagerObserverFactory = async () => ({
       observe: async () => {
@@ -306,25 +306,30 @@ describe("Integration: PipelineRunner", () => {
           telemetry: { session_state: "completed", thread_key: "child-thread" },
         };
       },
-      steer: async (context, node) => {
-        const message =
-          context.getString("manager.steering_message") ||
-          String(node.attrs["manager.steering_message"] ?? "");
-        steeringMessages.push(message);
-        return { applied: true, notes: "Steering injected" };
-      },
     });
 
     const runner = new PipelineRunner({
       logsRoot: tmpDir,
       managerObserverFactory,
+      steeringQueue,
     });
 
     const result = await runner.run(graph);
 
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
     expect(observeCalls).toBe(2);
-    expect(steeringMessages).toEqual(["Focus on finishing cleanly"]);
+    expect(
+      steeringQueue.peek({
+        runId: path.basename(tmpDir),
+        executionId: "child-thread",
+        nodeId: "child",
+      }),
+    ).toMatchObject([
+      {
+        message: "Focus on finishing cleanly",
+        source: "manager",
+      },
+    ]);
     expect(result.context.getString("stack.manager_loop.last_child_status")).toBe("completed");
     expect(result.context.getString("stack.manager_loop.lock_decision")).toBe("resolved");
   });
@@ -347,7 +352,6 @@ describe("Integration: PipelineRunner", () => {
       observe: async () => ({
         childStatus: "completed",
       }),
-      steer: async () => ({ applied: false }),
     });
 
     const runner = new PipelineRunner({

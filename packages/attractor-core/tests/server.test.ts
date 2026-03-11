@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { createServer, type HttpPipelineServer, type ServerConfig } from "../src/server/index.js";
+import { InMemorySteeringQueue } from "../src/steering/queue.js";
 
 /** Simple pipeline DOT source for testing */
 const SIMPLE_DOT = `
@@ -590,23 +591,17 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
 });
 
 describe("HTTP Server: POST /pipelines/{id}/steer", () => {
-  it("steers a running manager loop through the configured steerer", async () => {
-    const delivered: Array<{ bindingKey: string; message: string }> = [];
+  it("queues steering for a running manager loop", async () => {
+    const steeringQueue = new InMemorySteeringQueue();
 
     await restartServer({
+      steeringQueue,
       managerObserverFactory: async () => ({
         observe: async () => {
           await new Promise((resolve) => setTimeout(resolve, 250));
           return { childStatus: "completed", childOutcome: "success" };
         },
-        steer: async () => ({ applied: false }),
       }),
-      managerSteerer: {
-        steer: async (bindingKey, message) => {
-          delivered.push({ bindingKey, message });
-          return { applied: true };
-        },
-      },
     });
 
     const { data: runData } = await request("POST", "/pipelines", {
@@ -622,10 +617,11 @@ describe("HTTP Server: POST /pipelines/{id}/steer", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(delivered).toEqual([
+    expect(response.data.delivery).toBe("queued");
+    expect(steeringQueue.peek({ runId, executionId: "child-thread" })).toMatchObject([
       {
-        bindingKey: "child-thread",
         message: "Focus on the failing test first.",
+        source: "api",
       },
     ]);
   });

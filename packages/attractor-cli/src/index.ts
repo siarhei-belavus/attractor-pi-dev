@@ -9,10 +9,10 @@ import {
   ConsoleInterviewer,
   AutoApproveInterviewer,
   createServer,
+  InMemorySteeringQueue,
   type PipelineEvent,
   type CodergenBackend,
   type ManagerObserverFactory,
-  type ManagerSteerer,
 } from "@attractor/core";
 import {
   PiAgentCodergenBackend,
@@ -180,11 +180,13 @@ export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
     : new ConsoleInterviewer();
 
   let backend: CodergenBackend | null;
+  const steeringQueue = new InMemorySteeringQueue();
   if (simulate) {
     backend = null;
   } else {
     backend = deps.createBackend({
       cwd: path.dirname(filePath),
+      steeringQueue,
       ...(provider && { defaultProvider: provider }),
       ...(model && { defaultModel: model }),
       ...(debugWriter && {
@@ -210,6 +212,7 @@ export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
     backend,
     interviewer,
     logsRoot,
+    steeringQueue,
     onEvent: (event) => {
       printEvent(event, verbose);
     },
@@ -289,9 +292,11 @@ export async function serveCommand(args: string[], deps: CliDeps = defaultDeps) 
   const host = getArgValue(args, "--host") ?? "127.0.0.1";
   const provider = getArgValue(args, "--provider");
   const model = getArgValue(args, "--model");
+  const steeringQueue = new InMemorySteeringQueue();
 
   const backend = deps.createBackend({
     cwd: process.cwd(),
+    steeringQueue,
     ...(provider && { defaultProvider: provider }),
     ...(model && { defaultModel: model }),
   });
@@ -299,7 +304,7 @@ export async function serveCommand(args: string[], deps: CliDeps = defaultDeps) 
   const server = createServer({
     backend,
     managerObserverFactory: getManagerObserverFactory(backend),
-    managerSteerer: getManagerSteerer(backend),
+    steeringQueue,
   });
 
   server.listen(port, host, () => {
@@ -307,7 +312,7 @@ export async function serveCommand(args: string[], deps: CliDeps = defaultDeps) 
     console.log("Endpoints:");
     console.log("  POST /pipelines              - Start a pipeline (JSON body: { dotSource })");
     console.log("  GET  /pipelines/:id          - Get run status");
-    console.log("  POST /pipelines/:id/steer    - Send manager steering");
+    console.log("  POST /pipelines/:id/steer    - Queue manager steering");
     console.log("  POST /pipelines/:id/questions/:qid/answer - Submit human answer");
     console.log("  GET  /pipelines/:id/events   - SSE event stream");
   });
@@ -364,7 +369,7 @@ export async function steerCommand(args: string[]) {
     process.exit(1);
   }
 
-  console.log(`Steering accepted for ${runId}`);
+  console.log(`Steering queued for ${runId}`);
 }
 
 function getManagerObserverFactory(
@@ -377,16 +382,6 @@ function getManagerObserverFactory(
     return (backend as {
       createManagerObserverFactory: () => ManagerObserverFactory;
     }).createManagerObserverFactory();
-  }
-  return undefined;
-}
-
-function getManagerSteerer(backend: CodergenBackend): ManagerSteerer | undefined {
-  if ("steer" in backend && typeof (backend as { steer?: unknown }).steer === "function") {
-    return {
-      steer: (bindingKey: string, message: string) =>
-        (backend as { steer: (bindingKey: string, message: string) => Promise<{ applied: boolean; notes?: string }> }).steer(bindingKey, message),
-    };
   }
   return undefined;
 }

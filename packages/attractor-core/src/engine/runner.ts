@@ -13,6 +13,7 @@ import type {
   Interviewer,
   ManagerObserverFactory,
 } from "../handlers/types.js";
+import { InMemorySteeringQueue, type SteeringQueue } from "../steering/queue.js";
 import { selectEdge } from "./edge-selection.js";
 import { buildRetryPolicy, delayForAttempt, sleep } from "./retry.js";
 
@@ -20,6 +21,8 @@ export interface RunConfig {
   backend?: CodergenBackend | null;
   interviewer?: Interviewer;
   managerObserverFactory?: ManagerObserverFactory;
+  steeringQueue?: SteeringQueue;
+  runId?: string;
   logsRoot?: string;
   resumeFrom?: string;
   onEvent?: (event: PipelineEvent) => void;
@@ -40,6 +43,7 @@ export class PipelineRunner {
     this.registry = new HandlerRegistry({
       backend: config.backend ?? null,
       interviewer: config.interviewer,
+      steeringQueue: config.steeringQueue ?? new InMemorySteeringQueue(),
     });
 
     if (config.onEvent) {
@@ -94,6 +98,27 @@ export class PipelineRunner {
       // Set incoming edge fidelity context for handlers
       context.set("internal.incoming_edge_fidelity", subgraphIncomingEdge?.fidelity ?? "");
       context.set("internal.incoming_edge_thread_id", subgraphIncomingEdge?.threadId ?? "");
+      const effectiveFidelity = resolveEffectiveFidelity(
+        subgraphIncomingEdge?.fidelity ?? "",
+        currentNode.fidelity,
+        graph.attrs.defaultFidelity,
+      );
+      context.set("internal.effective_fidelity", effectiveFidelity);
+
+      const executionId = resolveThreadKey({
+        nodeThreadId: currentNode.threadId,
+        edgeThreadId: subgraphIncomingEdge?.threadId ?? "",
+        graphDefaultThread: String(graph.attrs["default_thread"] ?? ""),
+        subgraphClass: currentNode.classes.length > 0 ? currentNode.classes[0]! : "",
+        previousNodeId: subgraphPreviousNodeId,
+      });
+      if (effectiveFidelity === "full") {
+        context.set("internal.thread_key", executionId);
+      } else {
+        context.delete("internal.thread_key");
+      }
+      context.set("internal.current_execution_id", executionId);
+      context.set("internal.current_node_id", currentNode.id);
 
       // Execute the handler for this node
       const handler = this.registry.resolve(currentNode);
@@ -110,6 +135,14 @@ export class PipelineRunner {
       context.set("outcome", lastOutcome.status);
       if (lastOutcome.preferredLabel) {
         context.set("preferred_label", lastOutcome.preferredLabel);
+      }
+      context.set("internal.last_completed_execution_id", executionId);
+      context.set("internal.last_completed_node_id", currentNode.id);
+      const currentBranchKey = context.getString("internal.current_branch_key");
+      if (currentBranchKey) {
+        context.set("internal.last_completed_branch_key", currentBranchKey);
+      } else {
+        context.delete("internal.last_completed_branch_key");
       }
 
       // If the handler failed, stop the subgraph execution
@@ -166,11 +199,13 @@ export class PipelineRunner {
     fs.writeFileSync(path.join(logsRoot, "manifest.json"), JSON.stringify(manifest, null, 2));
 
     const context = overrideContext ?? new Context();
+    const runId = this.config.runId ?? path.basename(logsRoot);
     const completedNodes: string[] = [];
     const nodeOutcomes = new Map<string, Outcome>();
 
     // Mirror graph attributes into context
     context.set("graph.goal", graph.attrs.goal);
+    context.set("internal.run_id", runId);
 
     const startTime = Date.now();
     this.emitter.emit({
@@ -349,20 +384,22 @@ export class PipelineRunner {
 
       // Thread resolution (spec §5.4): when fidelity is "full", determine thread key
       // for LLM session reuse.
+      const executionId = resolveThreadKey({
+        nodeThreadId: node.threadId,
+        edgeThreadId: incomingEdge?.threadId ?? "",
+        graphDefaultThread: String(graph.attrs["default_thread"] ?? ""),
+        subgraphClass: node.classes.length > 0 ? node.classes[0]! : "",
+        previousNodeId,
+      });
       if (effectiveFidelity === "full") {
-        const threadKey = resolveThreadKey({
-          nodeThreadId: node.threadId,
-          edgeThreadId: incomingEdge?.threadId ?? "",
-          graphDefaultThread: String(graph.attrs["default_thread"] ?? ""),
-          subgraphClass: node.classes.length > 0 ? node.classes[0]! : "",
-          previousNodeId,
-        });
-        context.set("internal.thread_key", threadKey);
+        context.set("internal.thread_key", executionId);
       } else {
         context.delete("internal.thread_key");
       }
 
       context.set("internal.effective_fidelity", effectiveFidelity);
+      context.set("internal.current_execution_id", executionId);
+      context.set("internal.current_node_id", node.id);
 
       // Step 2: Execute node handler with retry
       const stageStart = Date.now();
@@ -437,9 +474,13 @@ export class PipelineRunner {
       // Step 4: Record completion
       completedNodes.push(node.id);
       nodeOutcomes.set(node.id, outcome);
-      const executedThreadKey = context.getString("internal.thread_key");
-      if (executedThreadKey) {
-        context.set("internal.last_completed_thread_key", executedThreadKey);
+      context.set("internal.last_completed_execution_id", executionId);
+      context.set("internal.last_completed_node_id", node.id);
+      const currentBranchKey = context.getString("internal.current_branch_key");
+      if (currentBranchKey) {
+        context.set("internal.last_completed_branch_key", currentBranchKey);
+      } else {
+        context.delete("internal.last_completed_branch_key");
       }
       lastOutcome = outcome;
       stageIndex++;

@@ -133,13 +133,13 @@ attractor serve [options]
 |--------|------|-------------|
 | `POST` | `/pipelines` | Start a pipeline. JSON body: `{ "dotSource": "..." }`. |
 | `GET`  | `/pipelines/{id}` | Get run status. |
-| `POST` | `/pipelines/{id}/steer` | Send a manager-loop steering message. JSON body: `{ "message": "..." }`. |
+| `POST` | `/pipelines/{id}/steer` | Queue a manager-loop steering message. JSON body: `{ "message": "..." }`. |
 | `POST` | `/pipelines/{id}/questions/{qid}/answer` | Submit a human-in-the-loop answer. |
 | `GET`  | `/pipelines/{id}/events` | SSE event stream. |
 
 ### `attractor steer`
 
-Send a steering message to a running pipeline through the HTTP server.
+Queue a steering message for a running pipeline through the HTTP server.
 
 ```
 attractor steer <run-id> --message <text> [options]
@@ -149,7 +149,9 @@ attractor steer <run-id> --message <text> [options]
 
 | Flag | Description |
 |------|-------------|
-| `--message <text>` | Steering message to inject. Required. |
+| `--message <text>` | Steering message to queue. Required. |
+
+Queued steering is process-local and in-memory in this implementation. It may be consumed by the active backend execution in the same process, but it does not survive process restart or checkpoint resume.
 | `--port <number>` | Server port. Default: `3000`. |
 | `--host <addr>` | Server host. Default: `127.0.0.1`. |
 

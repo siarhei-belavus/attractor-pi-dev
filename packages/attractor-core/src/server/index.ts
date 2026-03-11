@@ -10,7 +10,6 @@ import type {
   Answer,
   CodergenBackend,
   ManagerObserverFactory,
-  ManagerSteerer,
 } from "../handlers/types.js";
 import { StageStatus } from "../state/types.js";
 import { Checkpoint } from "../state/checkpoint.js";
@@ -20,6 +19,13 @@ import { QuestionStore } from "./question-store.js";
 import type { QuestionRecord } from "./question-store.js";
 import { RunStateStore } from "./run-state.js";
 import type { RunStatus } from "./run-state.js";
+import {
+  createSteeringMessage,
+  getRunScopedSteeringTarget,
+  InMemorySteeringQueue,
+  type SteeringQueue,
+  type SteeringTarget,
+} from "../steering/queue.js";
 
 export type { RunStatus } from "./run-state.js";
 
@@ -38,7 +44,7 @@ export interface RunState {
   events: PipelineEvent[];
   eventListeners: Set<EventListener>;
   pendingQuestionId: string | null;
-  activeManagerBindingKey: string | null;
+  activeManagerTarget: SteeringTarget | null;
   cancelled: boolean;
   runStateStore: RunStateStore;
   questionStore: QuestionStore;
@@ -47,12 +53,13 @@ export interface RunState {
 export interface ServerConfig {
   backend?: CodergenBackend | null;
   managerObserverFactory?: ManagerObserverFactory;
-  managerSteerer?: ManagerSteerer;
+  steeringQueue?: SteeringQueue;
   logsRoot?: string;
 }
 
 export function createServer(serverConfig: ServerConfig = {}): http.Server {
   const runs = new Map<string, RunState>();
+  const steeringQueue = serverConfig.steeringQueue ?? new InMemorySteeringQueue();
   const runsBaseRoot =
     serverConfig.logsRoot ??
     path.join(process.cwd(), ".attractor-runs");
@@ -177,7 +184,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       events: [],
       eventListeners: new Set(),
       pendingQuestionId: null,
-      activeManagerBindingKey: null,
+      activeManagerTarget: null,
       cancelled: initialStatus === "cancelled",
       runStateStore,
       questionStore,
@@ -211,12 +218,20 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       backend: serverConfig.backend ?? null,
       interviewer,
       logsRoot: run.logsRoot,
+      runId: run.runId,
+      steeringQueue,
       ...(serverConfig.managerObserverFactory
         ? {
             managerObserverFactory: async (input) => {
-              const bindingKey =
-                input.context.getString("internal.last_completed_thread_key") || null;
-              run.activeManagerBindingKey = bindingKey;
+              const executionId =
+                input.context.getString("internal.last_completed_execution_id") || "";
+              const branchKey =
+                input.context.getString("internal.last_completed_branch_key") || "";
+              run.activeManagerTarget = {
+                runId: run.runId,
+                ...(executionId ? { executionId } : {}),
+                ...(branchKey ? { branchKey } : {}),
+              };
               return serverConfig.managerObserverFactory!(input);
             },
           }
@@ -225,7 +240,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       onEvent: (event: PipelineEvent) => {
         if (event.type === "stage_started") {
           run.currentNode = event.name;
-          run.activeManagerBindingKey = null;
+          run.activeManagerTarget = null;
           if (!run.cancelled && run.status !== "waiting_for_answer") {
             run.status = "running";
           }
@@ -259,7 +274,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
           run.status = result.outcome.status === StageStatus.FAIL ? "failed" : "completed";
           run.pendingQuestionId = null;
         }
-        run.activeManagerBindingKey = null;
+        run.activeManagerTarget = null;
         run.completedNodes = [...result.completedNodes];
         if (result.outcome.status !== StageStatus.WAITING) {
           run.currentNode = run.completedNodes[run.completedNodes.length - 1] ?? null;
@@ -275,7 +290,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
         run.status = "failed";
         run.error = String(err);
         run.pendingQuestionId = null;
-        run.activeManagerBindingKey = null;
+        run.activeManagerTarget = null;
         persistRunState(run);
       });
   }
@@ -586,29 +601,20 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       sendError(res, 409, `Pipeline is already ${run.status}`);
       return;
     }
-    if (!serverConfig.managerSteerer) {
-      sendError(res, 409, "Manager steering is not configured for this server");
-      return;
-    }
-    if (!run.activeManagerBindingKey) {
-      sendError(res, 409, "Run has no active manager-loop-bound child session");
-      return;
-    }
-
-    const result = await serverConfig.managerSteerer.steer(
-      run.activeManagerBindingKey,
-      parsed.message,
+    const target = run.activeManagerTarget ?? getRunScopedSteeringTarget(runId);
+    steeringQueue.enqueue(
+      createSteeringMessage({
+        target,
+        message: parsed.message,
+        source: "api",
+      }),
     );
-    if (!result.applied) {
-      sendError(res, 409, result.notes ?? "Steering was not applied");
-      return;
-    }
 
     sendJson(res, 200, {
       accepted: true,
       runId,
-      bindingKey: run.activeManagerBindingKey,
-      ...(result.notes ? { notes: result.notes } : {}),
+      target,
+      delivery: "queued",
     });
   }
 

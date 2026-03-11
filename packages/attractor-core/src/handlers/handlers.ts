@@ -5,6 +5,12 @@ import type { Context } from "../state/context.js";
 import type { Outcome } from "../state/types.js";
 import { StageStatus, successOutcome, failOutcome } from "../state/types.js";
 import { applyFidelity, resolveEffectiveFidelity } from "../state/fidelity.js";
+import {
+  createSteeringMessage,
+  getLastCompletedSteeringTarget,
+  InMemorySteeringQueue,
+  type SteeringQueue,
+} from "../steering/queue.js";
 import type {
   Handler,
   CodergenBackend,
@@ -515,6 +521,7 @@ export class ParallelHandler implements Handler {
 
       try {
         const branchContext = context.clone();
+        branchContext.set("internal.current_branch_key", branches[index]!.toNode);
         const outcome = await this.executeSubgraph!(
           branches[index]!.toNode,
           branchContext,
@@ -790,6 +797,8 @@ export class ManagerLoopHandler implements Handler {
   private observerFactory?: ManagerObserverFactory;
   private lastSteerTime = 0;
 
+  constructor(private readonly steeringQueue: SteeringQueue = new InMemorySteeringQueue()) {}
+
   /** Wire an observer for the observe/steer cycle (analogous to ParallelHandler.setSubgraphExecutor) */
   setObserver(observer: ManagerObserver): void {
     this.observer = observer;
@@ -829,6 +838,7 @@ export class ManagerLoopHandler implements Handler {
         context,
         graph,
         logsRoot,
+        steeringQueue: this.steeringQueue,
       }));
 
     if (!observer) {
@@ -947,9 +957,10 @@ export class ManagerLoopHandler implements Handler {
         actions.has("steer") &&
         this.steerCooldownElapsed(steerCooldownMs)
       ) {
-        const steerResult = await observer.steer(context, node);
-        steeringApplied = steerResult.applied;
-        this.lastSteerTime = Date.now();
+        steeringApplied = this.enqueueSteering(context, node);
+        if (steeringApplied) {
+          this.lastSteerTime = Date.now();
+        }
       }
       cycles.push({
         cycle,
@@ -1019,6 +1030,30 @@ export class ManagerLoopHandler implements Handler {
   private steerCooldownElapsed(cooldownMs: number): boolean {
     if (this.lastSteerTime === 0) return true;
     return Date.now() - this.lastSteerTime >= cooldownMs;
+  }
+
+  private enqueueSteering(context: Context, node: GraphNode): boolean {
+    const message =
+      context.getString("manager.steering_message") ||
+      context.getString("stack.manager.steering_message") ||
+      String(node.attrs["manager.steering_message"] ?? "").trim();
+    if (!message) {
+      return false;
+    }
+
+    const target = getLastCompletedSteeringTarget(context);
+    if (!target) {
+      return false;
+    }
+
+    this.steeringQueue.enqueue(
+      createSteeringMessage({
+        target,
+        message,
+        source: "manager",
+      }),
+    );
+    return true;
   }
 }
 

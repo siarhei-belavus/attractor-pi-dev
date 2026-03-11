@@ -6,6 +6,7 @@ import { Context } from "../src/state/context.js";
 import { Checkpoint } from "../src/state/checkpoint.js";
 import { ArtifactStore } from "../src/state/artifact-store.js";
 import { StageStatus } from "../src/state/types.js";
+import { InMemorySteeringQueue, createSteeringMessage } from "../src/steering/queue.js";
 
 describe("Context", () => {
   it("set and get values", () => {
@@ -122,6 +123,31 @@ describe("Checkpoint", () => {
   it("load throws clear error for malformed checkpoint JSON", () => {
     fs.writeFileSync(path.join(tmpDir, "checkpoint.json"), "{");
     expect(() => Checkpoint.load(tmpDir)).toThrow(/Failed to load checkpoint JSON/);
+  });
+
+  it("does not persist queued steering in checkpoint state", () => {
+    const queue = new InMemorySteeringQueue();
+    queue.enqueue(
+      createSteeringMessage({
+        target: { runId: "run-1", executionId: "exec-1" },
+        message: "Ephemeral steering",
+        source: "api",
+      }),
+    );
+
+    new Checkpoint({
+      currentNode: "plan",
+      completedNodes: ["start"],
+      nodeOutcomes: { start: { status: StageStatus.SUCCESS } },
+      context: { "graph.goal": "Test" },
+      nodeRetries: {},
+    }).save(tmpDir);
+
+    const saved = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "checkpoint.json"), "utf-8"),
+    ) as Record<string, unknown>;
+    expect(JSON.stringify(saved)).not.toContain("Ephemeral steering");
+    expect(queue.peek({ runId: "run-1", executionId: "exec-1" })).toHaveLength(1);
   });
 });
 

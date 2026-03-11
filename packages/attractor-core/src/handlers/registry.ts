@@ -1,6 +1,7 @@
 import type { GraphNode } from "../model/graph.js";
 import { SHAPE_TO_HANDLER_TYPE } from "../model/types.js";
 import type { Handler, Interviewer, CodergenBackend } from "./types.js";
+import type { SteeringQueue } from "../steering/queue.js";
 import {
   StartHandler,
   ExitHandler,
@@ -22,9 +23,11 @@ export class HandlerRegistry {
   constructor(opts?: {
     backend?: CodergenBackend | null;
     interviewer?: Interviewer;
+    steeringQueue?: SteeringQueue;
   }) {
     const backend = opts?.backend ?? null;
     const interviewer = opts?.interviewer ?? new AutoApproveInterviewer();
+    const steeringQueue = opts?.steeringQueue;
 
     this.defaultHandler = new CodergenHandler(backend);
 
@@ -37,7 +40,7 @@ export class HandlerRegistry {
     this.register("parallel", new ParallelHandler());
     this.register("parallel.fan_in", new FanInHandler(backend));
     this.register("tool", new ToolHandler());
-    this.register("stack.manager_loop", new ManagerLoopHandler());
+    this.register("stack.manager_loop", new ManagerLoopHandler(steeringQueue));
   }
 
   register(typeString: string, handler: Handler): void {

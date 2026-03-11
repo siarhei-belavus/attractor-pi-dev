@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Context } from "@attractor/core";
+import { Context, InMemorySteeringQueue, createSteeringMessage } from "@attractor/core";
 import { PiAgentCodergenBackend } from "../src/backend.js";
 import { SessionState } from "../src/session.js";
 
@@ -50,9 +50,13 @@ describe("Pi manager observer integration", () => {
         allowPartial: false,
         attrs: {},
       },
-      context: Context.fromSnapshot({ "internal.last_completed_thread_key": "child-thread" }),
+      context: Context.fromSnapshot({
+        "internal.run_id": "run-1",
+        "internal.last_completed_execution_id": "child-thread",
+      }),
       graph: {} as any,
       logsRoot: "/tmp",
+      steeringQueue: new InMemorySteeringQueue(),
     });
 
     const snapshot = await observer!.observe(new Context());
@@ -102,8 +106,12 @@ describe("Pi manager observer integration", () => {
     });
   });
 
-  it("steers a bound session by binding key", async () => {
-    const backend = new PiAgentCodergenBackend({ reuseSessions: true }) as any;
+  it("drains queued steering into a bound session", async () => {
+    const steeringQueue = new InMemorySteeringQueue();
+    const backend = new PiAgentCodergenBackend({
+      reuseSessions: true,
+      steeringQueue,
+    }) as any;
     const steerSpy = vi.fn();
     backend.sessions.set("child-thread", {
       steer: steerSpy,
@@ -122,9 +130,15 @@ describe("Pi manager observer integration", () => {
       }),
     });
 
-    const result = await backend.steer("child-thread", "Keep going");
+    steeringQueue.enqueue(
+      createSteeringMessage({
+        target: { runId: "run-1", executionId: "child-thread" },
+        message: "Keep going",
+        source: "api",
+      }),
+    );
+    backend.consumeQueuedSteering({ runId: "run-1", executionId: "child-thread" });
 
-    expect(result.applied).toBe(true);
     expect(steerSpy).toHaveBeenCalledWith("Keep going");
   });
 });

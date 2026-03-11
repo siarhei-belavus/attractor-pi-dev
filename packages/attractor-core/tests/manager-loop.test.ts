@@ -2,13 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 import { ManagerLoopHandler } from "../src/handlers/handlers.js";
 import { Context } from "../src/state/context.js";
 import { StageStatus } from "../src/state/types.js";
+import { InMemorySteeringQueue } from "../src/steering/queue.js";
 import type { GraphNode } from "../src/model/graph.js";
 import type { Graph } from "../src/model/graph.js";
-import type {
-  ManagerObserver,
-  ObserveResult,
-  SteerResult,
-} from "../src/handlers/types.js";
+import type { ManagerObserver, ObserveResult } from "../src/handlers/types.js";
 
 /** Helper to create a minimal GraphNode with manager attrs */
 function makeManagerNode(
@@ -67,7 +64,6 @@ describe("ManagerLoopHandler", () => {
           }
           return { childStatus: "running" };
         },
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -101,7 +97,6 @@ describe("ManagerLoopHandler", () => {
           childStatus: "failed",
           childOutcome: "error",
         }),
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -131,7 +126,6 @@ describe("ManagerLoopHandler", () => {
         observe: async (): Promise<ObserveResult> => ({
           childStatus: "running",
         }),
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -165,7 +159,6 @@ describe("ManagerLoopHandler", () => {
           }
           return { childStatus: "running" };
         },
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -193,7 +186,6 @@ describe("ManagerLoopHandler", () => {
           }
           return { childStatus: "running" };
         },
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -217,7 +209,6 @@ describe("ManagerLoopHandler", () => {
         observe: async (): Promise<ObserveResult> => ({
           childStatus: "running",
         }),
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -248,7 +239,6 @@ describe("ManagerLoopHandler", () => {
             current_stage: "build",
           },
         }),
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -275,7 +265,6 @@ describe("ManagerLoopHandler", () => {
       });
       const observer: ManagerObserver = {
         observe: observeSpy,
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -299,12 +288,8 @@ describe("ManagerLoopHandler", () => {
   });
 
   describe("steer action", () => {
-    it("calls steer when steer is in actions", async () => {
+    it("enqueues steering when steer is in actions", async () => {
       let observeCalls = 0;
-      const steerSpy = vi.fn<() => Promise<SteerResult>>().mockResolvedValue({
-        applied: true,
-        notes: "Guided child to focus on tests",
-      });
       const observer: ManagerObserver = {
         observe: async (): Promise<ObserveResult> => {
           observeCalls++;
@@ -313,38 +298,51 @@ describe("ManagerLoopHandler", () => {
           }
           return { childStatus: "running" };
         },
-        steer: steerSpy,
       };
 
-      const handler = new ManagerLoopHandler();
+      const steeringQueue = new InMemorySteeringQueue();
+      const handler = new ManagerLoopHandler(steeringQueue);
       handler.setObserver(observer);
       const node = makeManagerNode({
         attrs: {
           "manager.max_cycles": "5",
           "manager.actions": "observe,steer",
           "manager.steer_cooldown_ms": "0",
+          "manager.steering_message": "Focus on tests",
         },
       });
-      const ctx = new Context();
+      const ctx = Context.fromSnapshot({
+        "internal.run_id": "run-1",
+        "internal.last_completed_execution_id": "child-thread",
+        "internal.last_completed_node_id": "child",
+      });
       const result = await handler.execute(node, ctx, stubGraph, stubLogsRoot);
 
       expect(result.status).toBe(StageStatus.SUCCESS);
-      expect(steerSpy).toHaveBeenCalledTimes(1);
+      expect(
+        steeringQueue.peek({
+          runId: "run-1",
+          executionId: "child-thread",
+          nodeId: "child",
+        }),
+      ).toMatchObject([
+        {
+          message: "Focus on tests",
+          source: "manager",
+        },
+      ]);
     });
 
-    it("does not call steer when not in actions", async () => {
-      const steerSpy = vi.fn<() => Promise<SteerResult>>().mockResolvedValue({
-        applied: false,
-      });
+    it("does not enqueue steering when not in actions", async () => {
       const observer: ManagerObserver = {
         observe: async (): Promise<ObserveResult> => ({
           childStatus: "completed",
           childOutcome: "success",
         }),
-        steer: steerSpy,
       };
 
-      const handler = new ManagerLoopHandler();
+      const steeringQueue = new InMemorySteeringQueue();
+      const handler = new ManagerLoopHandler(steeringQueue);
       handler.setObserver(observer);
       const node = makeManagerNode({
         attrs: {
@@ -352,10 +350,19 @@ describe("ManagerLoopHandler", () => {
           "manager.actions": "observe",
         },
       });
-      const ctx = new Context();
+      const ctx = Context.fromSnapshot({
+        "internal.run_id": "run-1",
+        "internal.last_completed_execution_id": "child-thread",
+      });
       await handler.execute(node, ctx, stubGraph, stubLogsRoot);
 
-      expect(steerSpy).not.toHaveBeenCalled();
+      expect(
+        steeringQueue.peek({
+          runId: "run-1",
+          executionId: "child-thread",
+          nodeId: "child",
+        }),
+      ).toEqual([]);
     });
   });
 
@@ -370,7 +377,6 @@ describe("ManagerLoopHandler", () => {
           }
           return { childStatus: "running" };
         },
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -395,7 +401,6 @@ describe("ManagerLoopHandler", () => {
         observe: async (): Promise<ObserveResult> => ({
           childStatus: "running",
         }),
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -424,7 +429,6 @@ describe("ManagerLoopHandler", () => {
           childStatus: "completed",
           childOutcome: "partial",
         }),
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -454,7 +458,6 @@ describe("ManagerLoopHandler", () => {
           childOutcome: "success",
           childLockDecision: "resolved",
         }),
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -483,7 +486,6 @@ describe("ManagerLoopHandler", () => {
           childOutcome: "success",
           childLockDecision: "reopen",
         }),
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();
@@ -517,7 +519,6 @@ describe("ManagerLoopHandler", () => {
             childStatus: "completed",
           };
         },
-        steer: async (): Promise<SteerResult> => ({ applied: false }),
       };
 
       const handler = new ManagerLoopHandler();

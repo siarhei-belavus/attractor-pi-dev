@@ -1,6 +1,7 @@
 import type { Graph, GraphNode } from "../model/graph.js";
 import type { Context } from "../state/context.js";
 import type { Outcome } from "../state/types.js";
+import type { SteeringQueue } from "../steering/queue.js";
 
 /** Common interface for all node handlers */
 export interface Handler {
@@ -78,20 +79,10 @@ export interface ObserveResult {
   telemetry?: Record<string, unknown>;
 }
 
-/** Result of a steer() call — guidance injected into the child pipeline */
-export interface SteerResult {
-  /** Whether the steer action was applied */
-  applied: boolean;
-  /** Optional notes about what guidance was injected */
-  notes?: string;
-}
-
 /** Observer interface for the ManagerLoopHandler's observe/steer cycle */
 export interface ManagerObserver {
   /** Observe the child pipeline's current state and ingest telemetry into context */
   observe(context: Context): Promise<ObserveResult>;
-  /** Steer the child pipeline by injecting guidance */
-  steer(context: Context, node: GraphNode): Promise<SteerResult>;
 }
 
 export interface ManagerObserverFactoryInput {
@@ -99,11 +90,8 @@ export interface ManagerObserverFactoryInput {
   context: Context;
   graph: Graph;
   logsRoot: string;
+  steeringQueue: SteeringQueue;
 }
 
 export type ManagerObserverFactory =
   (input: ManagerObserverFactoryInput) => Promise<ManagerObserver | null | undefined> | ManagerObserver | null | undefined;
-
-export interface ManagerSteerer {
-  steer(bindingKey: string, message: string): Promise<SteerResult>;
-}

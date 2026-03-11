@@ -6,6 +6,7 @@ import { preparePipeline } from "../src/engine/pipeline.js";
 import { PipelineRunner } from "../src/engine/runner.js";
 import { Context } from "../src/state/context.js";
 import { StageStatus } from "../src/state/types.js";
+import { InMemorySteeringQueue, createSteeringMessage } from "../src/steering/queue.js";
 import type { Outcome } from "../src/state/types.js";
 import type { PipelineEvent } from "../src/events/index.js";
 import { QueueInterviewer } from "../src/handlers/interviewers.js";
@@ -128,6 +129,61 @@ describe("Parallel handler subgraph execution", () => {
     // The main context should NOT have branch_marker set (it was set on cloned contexts)
     // The parallel handler stores results in context as parallel.results
     expect(result.context.has("parallel.results")).toBe(true);
+  });
+
+  it("does not leak branch-scoped steering through fan-in", async () => {
+    const { graph } = preparePipeline(`
+      digraph FanInSteeringIsolation {
+        graph [goal="Test fan-in steering isolation"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        parallel_node [shape=component, label="Fan Out"]
+        branch_a [type="steering_consumer", label="Branch A"]
+        branch_b [type="steering_consumer", label="Branch B"]
+        fan_in [type="fan_in_probe", shape=tripleoctagon, label="Fan In"]
+        start -> parallel_node
+        parallel_node -> branch_a
+        parallel_node -> branch_b
+        branch_a -> fan_in
+        branch_b -> fan_in
+        fan_in -> exit
+      }
+    `);
+
+    const steeringQueue = new InMemorySteeringQueue();
+    steeringQueue.enqueue(
+      createSteeringMessage({
+        target: { runId: "run-fan-in", branchKey: "branch_a", nodeId: "branch_a" },
+        message: "Only branch A",
+        source: "api",
+      }),
+    );
+
+    let fanInMessages: string[] = [];
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      runId: "run-fan-in",
+      steeringQueue,
+    });
+    runner.registerHandler("steering_consumer", {
+      async execute(node) {
+        steeringQueue.drain({ runId: "run-fan-in", branchKey: node.id, nodeId: node.id });
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+    runner.registerHandler("fan_in_probe", {
+      async execute() {
+        fanInMessages = steeringQueue
+          .peek({ runId: "run-fan-in", branchKey: "fan_in" })
+          .map((message) => message.message);
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(fanInMessages).toEqual([]);
   });
 
   it("join policy wait_all succeeds when all branches succeed", async () => {
