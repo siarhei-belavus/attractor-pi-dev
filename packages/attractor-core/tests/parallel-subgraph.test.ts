@@ -1266,8 +1266,10 @@ describe("error_policy for parallel handler", () => {
     expect(executedNodes).toContain("branch_b");
     expect(executedNodes).toContain("branch_c");
 
-    // The overall result should be SUCCESS (first_success with 2 successes)
-    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    // The parallel branch outcomes still reflect first_success semantics,
+    // but the runner treats the failed branch stage as terminal when there
+    // is no explicit fail-edge or retry target.
+    expect(result.outcome.status).toBe(StageStatus.FAIL);
 
     // Results should reflect 1 failure and 2 successes
     const parallelResults = JSON.parse(

@@ -322,6 +322,12 @@ export class PipelineRunner {
               degradeNextFidelity = true;
             }
           } else {
+            if (
+              lastCompletedOutcome.status === StageStatus.FAIL ||
+              lastCompletedOutcome.status === StageStatus.PARTIAL_SUCCESS
+            ) {
+              return { outcome: lastCompletedOutcome, completedNodes, context };
+            }
             // No outgoing edge from last completed; re-execute from last completed
             currentNode = lastNode;
             // Remove from completed so it gets re-executed
@@ -722,11 +728,7 @@ export class PipelineRunner {
 
       const retryTarget = this.getRetryTarget(node, graph);
       if (!retryTarget) {
-        const nextEdge = selectEdge(outgoing, outcome, context);
-        if (!nextEdge) {
-          return null;
-        }
-        return { toNode: nextEdge.toNode, edge: nextEdge };
+        return null;
       }
 
       return { toNode: retryTarget, edge: null };
