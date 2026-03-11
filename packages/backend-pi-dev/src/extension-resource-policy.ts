@@ -13,7 +13,7 @@ export interface PiResourcePolicyInput {
 }
 
 const DEFAULT_POLICY: PiResourcePolicy = {
-  discovery: "auto",
+  discovery: "none",
   allowlist: [],
 };
 
@@ -36,7 +36,7 @@ export function parsePiResourcePolicyFromEnv(
       out.discovery = rawDiscovery;
     } else {
       onWarning?.(
-        `Invalid ${DISCOVERY_ENV}=${JSON.stringify(env[DISCOVERY_ENV])}; using default "auto".`,
+        `Invalid ${DISCOVERY_ENV}=${JSON.stringify(env[DISCOVERY_ENV])}; using default "none".`,
       );
     }
   }

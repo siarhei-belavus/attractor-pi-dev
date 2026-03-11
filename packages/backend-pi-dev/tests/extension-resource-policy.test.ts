@@ -55,7 +55,7 @@ describe("resolvePiResourcePolicy", () => {
 
   it("falls back to defaults when values are missing", () => {
     const resolved = resolvePiResourcePolicy(undefined, undefined);
-    expect(resolved.discovery).toBe("auto");
+    expect(resolved.discovery).toBe("none");
     expect(resolved.allowlist).toEqual([]);
   });
 });

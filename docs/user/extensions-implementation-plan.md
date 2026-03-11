@@ -12,7 +12,7 @@
 ### In scope
 
 1. Pi-specific resource policy via environment variables:
-   - `ATTRACTOR_PI_RESOURCE_DISCOVERY=auto|none`
+   - `ATTRACTOR_PI_RESOURCE_DISCOVERY=auto|none` (default `none`; `auto` is explicit opt-in)
    - `ATTRACTOR_PI_RESOURCE_ALLOWLIST=/abs/a.ts,/abs/b.ts` (comma-separated)
 2. Pi backend mapping for explicit extension loading.
 3. Safe session wiring that does not overwrite extension runtime tool stack.
@@ -38,7 +38,7 @@
 
 1. Add env-based policy reader in `backend-pi-dev` (no core contract changes).
 2. Parse and validate:
-   - `ATTRACTOR_PI_RESOURCE_DISCOVERY=auto|none`
+   - `ATTRACTOR_PI_RESOURCE_DISCOVERY=auto|none` (default `none`; `auto` is explicit opt-in)
    - `ATTRACTOR_PI_RESOURCE_ALLOWLIST=/abs/a.ts,/abs/b.ts`
 3. Keep defaults backward-compatible (`auto` + empty allowlist).
 4. Define precedence and parsing rules:

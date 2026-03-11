@@ -17,10 +17,12 @@
   "devDependencies": {
     "@attractor/cli": "workspace:*",
     "@attractor/backend-pi-dev": "workspace:*",
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "vitest": "^3.0.0"
   },
   "scripts": {
     "build": "pnpm --filter @attractor/core --filter @attractor/backend-pi-dev --filter @attractor/cli build && node esbuild.config.mjs",
+    "test:smoke": "pnpm build && vitest run --passWithNoTests tests/smoke.test.ts",
     "prepublishOnly": "pnpm run build"
   }
 }

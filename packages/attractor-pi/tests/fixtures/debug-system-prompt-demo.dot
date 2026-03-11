@@ -1,0 +1,9 @@
+digraph DebugSystemPromptDemo {
+    graph [goal="Inspect backend system prompt in debug mode"]
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    ask [label="Ask", prompt="Reply with exactly: debug demo ok"]
+
+    start -> ask -> exit
+}
