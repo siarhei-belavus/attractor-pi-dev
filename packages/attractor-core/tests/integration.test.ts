@@ -1997,6 +1997,46 @@ describe("Integration: Retry on failure (spec §4.5 / 11.12)", () => {
     expect(executed).toEqual(["retry_path"]);
   });
 
+  it("prefers retry_target over unconditional edges after failure", async () => {
+    const { graph } = preparePipeline(`
+      digraph RetryTargetBeforeCatchAll {
+        graph [goal="Retry target before catch-all"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        broken [type="always_fail", prompt="Always fail", retry_target="retry_path"]
+        catch_all [type="track_path", prompt="Catch-all path"]
+        retry_path [type="track_path", prompt="Retry path"]
+        start -> broken
+        broken -> catch_all
+        broken -> retry_path [condition="outcome=success"]
+        catch_all -> exit
+        retry_path -> exit
+      }
+    `);
+
+    const executed: string[] = [];
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+
+    runner.registerHandler("always_fail", {
+      async execute() {
+        return { status: StageStatus.FAIL, failureReason: "boom" };
+      },
+    });
+
+    runner.registerHandler("track_path", {
+      async execute(node) {
+        executed.push(node.id);
+        return { status: StageStatus.SUCCESS };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(executed).toEqual(["retry_path"]);
+    expect(result.completedNodes).not.toContain("catch_all");
+  });
+
   it("falls back to node.fallback_retry_target when node.retry_target is invalid", async () => {
     const { graph } = preparePipeline(`
       digraph NodeFallbackRetryTarget {
@@ -2137,7 +2177,7 @@ describe("Integration: Retry on failure (spec §4.5 / 11.12)", () => {
     const result = await runner.run(graph);
 
     expect(result.outcome.status).toBe(StageStatus.FAIL);
-    expect(result.outcome.failureReason).toBe("Stage failed with no outgoing fail edge");
+    expect(result.outcome.failureReason).toBe("boom");
   });
 
   it("resumes failure recovery through retry_target after a checkpoint", async () => {

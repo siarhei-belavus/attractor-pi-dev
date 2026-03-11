@@ -22,6 +22,7 @@ import {
   createManagerChildExecution,
   type ManagerChildExecution,
 } from "../manager/child-execution.js";
+import { evaluateCondition } from "../conditions/index.js";
 import { selectEdge } from "./edge-selection.js";
 import { buildRetryPolicy, delayForAttempt, sleep } from "./retry.js";
 import { preparePipeline } from "./pipeline.js";
@@ -535,7 +536,7 @@ export class PipelineRunner {
 
       if (!nextStep) {
         if (outcome.status === StageStatus.FAIL) {
-          lastOutcome = failOutcome("Stage failed with no outgoing fail edge");
+          lastOutcome = outcome;
         }
         break;
       }
@@ -713,21 +714,51 @@ export class PipelineRunner {
     context: Context,
   ): { toNode: string; edge: GraphEdge | null } | null {
     const outgoing = graph.outgoingEdges(node.id);
+    if (outcome.status === StageStatus.FAIL) {
+      const failEdge = this.selectMatchingConditionalEdge(outgoing, outcome, context);
+      if (failEdge) {
+        return { toNode: failEdge.toNode, edge: failEdge };
+      }
+
+      const retryTarget = this.getRetryTarget(node, graph);
+      if (!retryTarget) {
+        const nextEdge = selectEdge(outgoing, outcome, context);
+        if (!nextEdge) {
+          return null;
+        }
+        return { toNode: nextEdge.toNode, edge: nextEdge };
+      }
+
+      return { toNode: retryTarget, edge: null };
+    }
+
     const nextEdge = selectEdge(outgoing, outcome, context);
-    if (nextEdge) {
-      return { toNode: nextEdge.toNode, edge: nextEdge };
-    }
-
-    if (outcome.status !== StageStatus.FAIL) {
+    if (!nextEdge) {
       return null;
     }
 
-    const retryTarget = this.getRetryTarget(node, graph);
-    if (!retryTarget) {
+    return { toNode: nextEdge.toNode, edge: nextEdge };
+  }
+
+  private selectMatchingConditionalEdge(
+    edges: GraphEdge[],
+    outcome: Outcome,
+    context: Context,
+  ): GraphEdge | null {
+    const conditionMatched = edges.filter(
+      (edge) => edge.condition && evaluateCondition(edge.condition, outcome, context),
+    );
+    if (conditionMatched.length === 0) {
       return null;
     }
 
-    return { toNode: retryTarget, edge: null };
+    const sorted = [...conditionMatched].sort((a, b) => {
+      if (b.weight !== a.weight) {
+        return b.weight - a.weight;
+      }
+      return a.toNode.localeCompare(b.toNode);
+    });
+    return sorted[0] ?? null;
   }
 
   /** Get the event emitter for subscribing to events */
