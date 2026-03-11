@@ -18,7 +18,6 @@
 
 Главные расхождения со spec сейчас не в базовом happy path, а в краевых контрактах:
 - `goal_gate` проверяет только уже исполненные goal-gate узлы, а не все объявленные;
-- `manager_loop` реализован как handler, но observer в runner не wiring'ится, поэтому в реальном pipeline работает как no-op;
 - HTTP API почти совпадает, но нет `GET /pipelines/{id}/questions`;
 - `vars_declared` не проверяет `tool_command` / `pre_hook` / `post_hook`;
 - `auto_status` только парсится, но не применяется;
@@ -32,8 +31,8 @@
 | `3. Pipeline Execution Engine` — основной loop, edge selection, checkpoints, resume, loop_restart | `Partial` | `packages/attractor-core/src/engine/runner.ts:282`, `packages/attractor-core/src/engine/edge-selection.ts:1`, `packages/attractor-core/tests/integration.test.ts`, `packages/attractor-core/tests/parallel-subgraph.test.ts` | Core engine реализован хорошо: stage loop, retries, fidelity, checkpoints, resume, `loop_restart`. Главный пробел: `goal_gate` проверяется только по `nodeOutcomes`, то есть неисполненный `goal_gate=true` узел не блокирует exit (`packages/attractor-core/src/engine/runner.ts:594`). |
 | `3.4 Goal Gate Enforcement` | `Partial` | `packages/attractor-core/src/engine/runner.ts:283`, `packages/attractor-core/src/engine/runner.ts:594` | Если goal-gate узел уже выполнялся, статус учитывается корректно. Но spec требует проверять все goal-gate узлы перед exit, а текущая реализация смотрит только на те, что попали в `nodeOutcomes`. |
 | `3.5–3.7 Retry Logic / Failure Routing` | `Implemented` | `packages/attractor-core/src/engine/runner.ts:517`, `packages/attractor-core/src/engine/retry.ts`, `packages/attractor-core/tests/integration.test.ts` | Ретраи, backoff, jitter, exhaustion и routing по retry-target закрыты. `allow_partial` тоже используется при exhaustion RETRY-outcome. |
-| `4. Node Handlers` — start / exit / codergen / wait.human / conditional / parallel / fan-in / tool | `Partial` | `packages/attractor-core/src/handlers/registry.ts`, `packages/attractor-core/src/handlers/handlers.ts`, `packages/attractor-core/tests/engine.test.ts`, `packages/attractor-core/tests/parallel-subgraph.test.ts` | Все основные handler types есть и покрыты тестами. Частичный статус из-за `stack.manager_loop` и несовпадения tool hooks с контрактом spec. |
-| `4.11 Manager Loop Handler` | `Partial` | `packages/attractor-core/src/handlers/handlers.ts:684`, `packages/attractor-core/src/handlers/registry.ts:70`, `README.md:114` | Сам handler реализован, включая observe/steer cycle. Но `PipelineRunner` wiring делает только для `ParallelHandler`; observer для `ManagerLoopHandler` не подключается, поэтому handler по умолчанию возвращает success с `no observer`. |
+| `4. Node Handlers` — start / exit / codergen / wait.human / conditional / parallel / fan-in / tool | `Partial` | `packages/attractor-core/src/handlers/registry.ts`, `packages/attractor-core/src/handlers/handlers.ts`, `packages/attractor-core/tests/engine.test.ts`, `packages/attractor-core/tests/parallel-subgraph.test.ts` | Все основные handler types есть и покрыты тестами. Частичный статус теперь связан в основном с несовпадением tool hooks с контрактом spec. |
+| `4.11 Manager Loop Handler` | `Implemented` | `packages/attractor-core/src/handlers/handlers.ts`, `packages/attractor-core/src/engine/runner.ts`, `packages/attractor-core/src/server/index.ts`, `packages/backend-pi-dev/src/backend.ts`, `packages/attractor-core/tests/manager-loop.test.ts`, `packages/attractor-core/tests/server.test.ts`, `packages/backend-pi-dev/tests/manager-observer.test.ts` | Manager loop теперь владеет явным child execution, умеет autostart child DOT pipeline через `stack.child_dotfile`, ставит steering в общую queue-first control plane и принимает HTTP/CLI steering без требования live-target discovery. Ограничение остаётся осознанным: queue transport process-local и недолговечный. |
 | `4.10 Tool Handler` и spec `9.7 Tool Call Hooks` | `Partial` | `packages/attractor-core/src/handlers/handlers.ts:621`, `packages/attractor-core/tests/tool-hooks.test.ts` | `pre_hook`/`post_hook` работают вокруг `tool_command` у tool-node. Но spec `9.7` говорит про `tool_hooks.pre/post` вокруг каждого LLM tool call, а не только shell tool-node. Эта часть не закрыта end-to-end. |
 | `5. State and Context` — context store, artifacts, checkpoint, resume | `Partial` | `packages/attractor-core/src/state/context.ts`, `packages/attractor-core/src/state/checkpoint.ts`, `packages/attractor-core/src/engine/runner.ts:394`, `packages/attractor-core/tests/state.test.ts`, `packages/attractor-core/tests/integration.test.ts` | Контекст, artifacts и checkpoint/resume в core реализованы. Но CLI не экспонирует resume flow через отдельный флаг, хотя runner его поддерживает (`packages/attractor-cli/src/index.ts:67`). |
 | `5.x auto_status` contract | `Not implemented` | `packages/attractor-core/src/model/builder.ts:229`, `packages/attractor-core/src/model/graph.ts:22` | Атрибут `auto_status` парсится и хранится в модели, но в runner/handlers не используется. Механики “синтезировать SUCCESS, если handler не записал status” нет. |
@@ -60,7 +59,6 @@
 
 - Строгое соответствие DSL-ограничениям spec.
 - Goal-gate enforcement на всех объявленных узлах.
-- Manager loop end-to-end.
 - Validation parity по всем полям, которые перечислены в spec.
 - HTTP API parity по всем endpoint'ам.
 - Event stream parity по всем типам событий из spec.
@@ -74,8 +72,7 @@
 ## Приоритетный backlog для доведения до spec
 
 1. Исправить `goal_gate` так, чтобы exit сверял все узлы с `goal_gate=true`, а не только уже встреченные в `nodeOutcomes`.
-2. Довести `stack.manager_loop` до рабочего end-to-end wiring через observer в `PipelineRunner`.
-3. Добить validation parity для `vars_declared` на `tool_command`, `pre_hook`, `post_hook`.
-4. Добавить `GET /pipelines/{id}/questions`, не ломая текущий `pendingQuestion` в status response.
-5. Либо реализовать `auto_status`, либо убрать атрибут из публичной документации/языковой спецификации проекта.
-6. Решить, нужен ли полноценный spec-совместимый `tool_hooks.pre/post` именно для LLM tool calls, а не только для tool-node shell execution.
+2. Добить validation parity для `vars_declared` на `tool_command`, `pre_hook`, `post_hook`.
+3. Добавить `GET /pipelines/{id}/questions`, не ломая текущий `pendingQuestion` в status response.
+4. Либо реализовать `auto_status`, либо убрать атрибут из публичной документации/языковой спецификации проекта.
+5. Решить, нужен ли полноценный spec-совместимый `tool_hooks.pre/post` именно для LLM tool calls, а не только для tool-node shell execution.

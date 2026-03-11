@@ -322,8 +322,7 @@ describe("ManagerLoopHandler", () => {
       expect(
         steeringQueue.peek({
           runId: "run-1",
-          executionId: "child-thread",
-          nodeId: "child",
+          childExecutionId: "run-1:manager:attached-child",
         }),
       ).toMatchObject([
         {
@@ -359,8 +358,7 @@ describe("ManagerLoopHandler", () => {
       expect(
         steeringQueue.peek({
           runId: "run-1",
-          executionId: "child-thread",
-          nodeId: "child",
+          childExecutionId: "run-1:manager:attached-child",
         }),
       ).toEqual([]);
     });

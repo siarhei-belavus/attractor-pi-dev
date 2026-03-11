@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { Context, InMemorySteeringQueue, createSteeringMessage } from "@attractor/core";
+import {
+  Context,
+  InMemorySteeringQueue,
+  createSteeringMessage,
+} from "@attractor/core";
 import { PiAgentCodergenBackend } from "../src/backend.js";
 import { SessionState } from "../src/session.js";
 
@@ -57,6 +61,16 @@ describe("Pi manager observer integration", () => {
       graph: {} as any,
       logsRoot: "/tmp",
       steeringQueue: new InMemorySteeringQueue(),
+      childExecution: {
+        id: "run-1:manager:attached-child",
+        runId: "run-1",
+        ownerNodeId: "manager",
+        source: "attached",
+        autostart: false,
+        adapterTarget: {
+          executionId: "child-thread",
+        },
+      },
     });
 
     const snapshot = await observer!.observe(new Context());
@@ -132,12 +146,16 @@ describe("Pi manager observer integration", () => {
 
     steeringQueue.enqueue(
       createSteeringMessage({
-        target: { runId: "run-1", executionId: "child-thread" },
+        target: { runId: "run-1", childExecutionId: "run-1:manager:attached-child" },
         message: "Keep going",
         source: "api",
       }),
     );
-    backend.consumeQueuedSteering({ runId: "run-1", executionId: "child-thread" });
+    backend.consumeQueuedSteering({
+      runId: "run-1",
+      childExecutionId: "run-1:manager:attached-child",
+      executionId: "child-thread",
+    });
 
     expect(steerSpy).toHaveBeenCalledWith("Keep going");
   });
@@ -180,8 +198,7 @@ describe("Pi manager observer integration", () => {
       createSteeringMessage({
         target: {
           runId: "run-1",
-          executionId: "child-thread",
-          nodeId: "child",
+          childExecutionId: "run-1:manager:attached-child",
         },
         message: "Focus on the failing test first",
         source: "manager",
@@ -219,6 +236,17 @@ describe("Pi manager observer integration", () => {
       graph: {} as any,
       logsRoot: "/tmp",
       steeringQueue,
+      childExecution: {
+        id: "run-1:manager:attached-child",
+        runId: "run-1",
+        ownerNodeId: "manager",
+        source: "attached",
+        autostart: false,
+        adapterTarget: {
+          executionId: "child-thread",
+          nodeId: "child",
+        },
+      },
     });
 
     await observer!.observe(new Context());
@@ -230,8 +258,7 @@ describe("Pi manager observer integration", () => {
     expect(
       steeringQueue.peek({
         runId: "run-1",
-        executionId: "child-thread",
-        nodeId: "child",
+        childExecutionId: "run-1:manager:attached-child",
       }),
     ).toEqual([]);
   });

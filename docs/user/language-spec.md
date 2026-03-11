@@ -361,8 +361,15 @@ Some handlers read additional node attributes beyond the common set.
 | `manager.stop_condition`  | String   | `""`             | Condition expression to evaluate for early exit. |
 | `manager.actions`         | String   | `"observe,wait"` | Comma-separated actions per cycle: `observe`, `steer`, `wait`. |
 | `manager.steer_cooldown_ms` | Integer | unset          | Minimum time between steer actions. |
-| `stack.child_dotfile`     | String   | `""`             | Path to the child pipeline DOT file (graph-level). |
-| `stack.child_autostart`   | String   | `"true"`         | Auto-start the child pipeline. |
+| `stack.child_dotfile`     | String   | `""`             | Absolute path or CWD-relative path to the child pipeline DOT file (graph-level). |
+| `stack.child_autostart`   | String   | `"true"`         | When `true`, the manager starts the child DOT pipeline before entering the supervision loop. When `false`, the manager attaches to an existing child execution instead. |
+
+Manager-loop runtime contract:
+
+- The manager owns one explicit child execution identity for the lifetime of the `shape=house` stage.
+- Steering from the manager, HTTP API, and CLI is always queued against that manager-owned child execution.
+- Queue delivery is best-effort, process-local, and in-memory only; pending steering is not durable across restart or resume.
+- Backend-specific fields such as pi session/thread identifiers remain adapter details behind the manager-owned child execution contract.
 
 ## Context Keys Reference
 
@@ -429,6 +436,8 @@ These are set by specific handlers via `context_updates` in their Outcome.
 | `manager.final_cycle` | Integer | Cycle number when the loop completed. |
 | `stack.child.status` | String | Child pipeline status: `completed`, `failed`. |
 | `stack.child.outcome` | String | Child pipeline outcome. |
+| `stack.manager_loop.child.id` | String | Stable manager-owned child execution identifier. |
+| `stack.manager_loop.child.run_id` | String | Run ID used for queued steering and child supervision. |
 
 ### What You Can Route On
 
@@ -490,6 +499,12 @@ check -> skip [condition="graph.goal contains \"optional\""]
 ```
 
 Note: `outcome` and `preferred_label` are the primary routing mechanisms for most pipelines. The other keys are useful for specific handler types. Conditions on LLM response content (`last_response`) are limited to the first 200 characters.
+
+External steering semantics:
+
+- `POST /pipelines/{id}/steer` and `attractor steer` enqueue steering when the run is active and a manager-owned child execution exists.
+- Live consumer availability is not required at enqueue time.
+- The request fails only when the run is already terminal or when the manager loop has no child execution to target.
 
 ### Namespace Conventions
 

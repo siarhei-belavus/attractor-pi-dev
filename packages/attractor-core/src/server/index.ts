@@ -9,6 +9,7 @@ import type { PipelineEvent, EventListener } from "../events/index.js";
 import type {
   Answer,
   CodergenBackend,
+  ManagerChildExecution,
   ManagerObserverFactory,
 } from "../handlers/types.js";
 import { StageStatus } from "../state/types.js";
@@ -21,10 +22,9 @@ import { RunStateStore } from "./run-state.js";
 import type { RunStatus } from "./run-state.js";
 import {
   createSteeringMessage,
-  getActiveManagerTarget,
+  createSteeringTarget,
   InMemorySteeringQueue,
   type SteeringQueue,
-  type SteeringTarget,
 } from "../steering/queue.js";
 
 export type { RunStatus } from "./run-state.js";
@@ -44,7 +44,7 @@ export interface RunState {
   events: PipelineEvent[];
   eventListeners: Set<EventListener>;
   pendingQuestionId: string | null;
-  activeManagerTarget: SteeringTarget | null;
+  managerChildExecution: ManagerChildExecution | null;
   cancelled: boolean;
   runStateStore: RunStateStore;
   questionStore: QuestionStore;
@@ -184,7 +184,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       events: [],
       eventListeners: new Set(),
       pendingQuestionId: null,
-      activeManagerTarget: null,
+      managerChildExecution: null,
       cancelled: initialStatus === "cancelled",
       runStateStore,
       questionStore,
@@ -222,17 +222,16 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       steeringQueue,
       ...(serverConfig.managerObserverFactory
         ? {
-            managerObserverFactory: async (input) => {
-              run.activeManagerTarget = getActiveManagerTarget(run.runId, input.context);
-              return serverConfig.managerObserverFactory!(input);
-            },
+            managerObserverFactory: serverConfig.managerObserverFactory,
           }
         : {}),
+      onManagerChildExecution: (execution) => {
+        run.managerChildExecution = execution;
+      },
       ...(resumeFrom ? { resumeFrom } : {}),
       onEvent: (event: PipelineEvent) => {
         if (event.type === "stage_started") {
           run.currentNode = event.name;
-          run.activeManagerTarget = null;
           if (!run.cancelled && run.status !== "waiting_for_answer") {
             run.status = "running";
           }
@@ -266,7 +265,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
           run.status = result.outcome.status === StageStatus.FAIL ? "failed" : "completed";
           run.pendingQuestionId = null;
         }
-        run.activeManagerTarget = null;
+        run.managerChildExecution = null;
         run.completedNodes = [...result.completedNodes];
         if (result.outcome.status !== StageStatus.WAITING) {
           run.currentNode = run.completedNodes[run.completedNodes.length - 1] ?? null;
@@ -282,7 +281,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
         run.status = "failed";
         run.error = String(err);
         run.pendingQuestionId = null;
-        run.activeManagerTarget = null;
+        run.managerChildExecution = null;
         persistRunState(run);
       });
   }
@@ -593,12 +592,14 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       sendError(res, 409, `Pipeline is already ${run.status}`);
       return;
     }
-    if (!run.activeManagerTarget) {
-      sendError(res, 409, "Run has no active manager steering target");
+    if (!run.managerChildExecution) {
+      sendError(res, 409, "Run has no manager-owned child execution");
       return;
     }
 
-    const target = run.activeManagerTarget;
+    const target = createSteeringTarget(run.managerChildExecution.runId, {
+      childExecutionId: run.managerChildExecution.id,
+    });
     steeringQueue.enqueue(
       createSteeringMessage({
         target,

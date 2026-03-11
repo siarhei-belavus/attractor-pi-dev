@@ -273,6 +273,96 @@ describe("Integration: PipelineRunner", () => {
     expect(result.context.getString("stack.child.telemetry.thread_key")).toBe("child-thread");
   });
 
+  it("starts and supervises a child pipeline from stack.child_dotfile", async () => {
+    const childDotfile = path.join(tmpDir, "child.dot");
+    fs.writeFileSync(
+      childDotfile,
+      `
+        digraph ChildPipeline {
+          graph [goal="Run child work"]
+          start [shape=Mdiamond]
+          exit  [shape=Msquare]
+          child_work [label="Child Work", prompt="Finish the child task"]
+          start -> child_work -> exit
+        }
+      `,
+    );
+
+    const { graph } = preparePipeline(`
+      digraph ManagerStartsChild {
+        graph [goal="Supervise child pipeline", stack.child_dotfile="${childDotfile}"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        manager [shape=house, label="Manager"]
+        start -> manager -> exit
+      }
+    `);
+    graph.getNode("manager").attrs["manager.actions"] = "observe,wait";
+    graph.getNode("manager").attrs["manager.max_cycles"] = "20";
+    graph.getNode("manager").attrs["manager.poll_interval"] = "1ms";
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(result.context.getString("stack.manager_loop.child.id")).toBe(
+      `${path.basename(tmpDir)}:manager:child`,
+    );
+    expect(result.context.getString("stack.manager_loop.child.run_id")).toBe(
+      `${path.basename(tmpDir)}:manager:child-run`,
+    );
+    expect(result.context.getString("stack.child.status")).toBe("completed");
+    expect(result.context.getString("stack.child.outcome")).toBe("success");
+  });
+
+  it("attaches to an existing child execution when stack.child_autostart is disabled", async () => {
+    const { graph } = preparePipeline(`
+      digraph ManagerAttachesChild {
+        graph [goal="Attach to child", stack.child_autostart="false"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        child [label="Child", prompt="Do the work", thread_id="child-thread"]
+        manager [shape=house, label="Manager"]
+        start -> child -> manager -> exit
+      }
+    `);
+    graph.getNode("manager").attrs["manager.actions"] = "observe";
+    graph.getNode("manager").attrs["manager.max_cycles"] = "1";
+
+    let seenChildExecution: Record<string, unknown> | null = null;
+    const managerObserverFactory: ManagerObserverFactory = async ({ childExecution }) => {
+      seenChildExecution = childExecution as unknown as Record<string, unknown>;
+      return {
+        observe: async () => ({
+          childStatus: "completed",
+          childOutcome: "success",
+        }),
+      };
+    };
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      managerObserverFactory,
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(seenChildExecution).toMatchObject({
+      id: `${path.basename(tmpDir)}:manager:attached-child`,
+      runId: path.basename(tmpDir),
+      source: "attached",
+      autostart: false,
+      adapterTarget: {
+        executionId: "child-thread",
+        nodeId: "child",
+      },
+    });
+  });
+
   it("covers the manager observe/steer lifecycle end-to-end", async () => {
     const { graph } = preparePipeline(`
       digraph ManagerLoopLifecycle {
@@ -321,8 +411,7 @@ describe("Integration: PipelineRunner", () => {
     expect(
       steeringQueue.peek({
         runId: path.basename(tmpDir),
-        executionId: "child-thread",
-        nodeId: "child",
+        childExecutionId: `${path.basename(tmpDir)}:manager:attached-child`,
       }),
     ).toMatchObject([
       {

@@ -2,6 +2,7 @@ import type { Graph, GraphNode } from "../model/graph.js";
 import type { Context } from "../state/context.js";
 import type { Outcome } from "../state/types.js";
 import type { SteeringQueue } from "../steering/queue.js";
+import type { ManagerChildExecution } from "../manager/child-execution.js";
 
 /** Common interface for all node handlers */
 export interface Handler {
@@ -91,7 +92,25 @@ export interface ManagerObserverFactoryInput {
   graph: Graph;
   logsRoot: string;
   steeringQueue: SteeringQueue;
+  childExecution: ManagerChildExecution;
+  childRuntime?: ManagerChildRuntime;
 }
 
 export type ManagerObserverFactory =
   (input: ManagerObserverFactoryInput) => Promise<ManagerObserver | null | undefined> | ManagerObserver | null | undefined;
+
+export interface ManagerChildRuntime {
+  ensureChildExecution(context: Context): Promise<ManagerChildExecution>;
+  startChildExecution(context: Context): Promise<void>;
+}
+
+export interface ManagerChildRuntimeFactoryInput {
+  node: GraphNode;
+  context: Context;
+  graph: Graph;
+  logsRoot: string;
+  steeringQueue: SteeringQueue;
+}
+
+export type ManagerChildRuntimeFactory =
+  (input: ManagerChildRuntimeFactoryInput) => Promise<ManagerChildRuntime | null | undefined> | ManagerChildRuntime | null | undefined;

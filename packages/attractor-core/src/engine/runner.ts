@@ -11,11 +11,20 @@ import { HandlerRegistry } from "../handlers/registry.js";
 import type {
   CodergenBackend,
   Interviewer,
+  ManagerChildRuntime,
+  ManagerChildRuntimeFactoryInput,
+  ManagerObserver,
   ManagerObserverFactory,
 } from "../handlers/types.js";
 import { InMemorySteeringQueue, type SteeringQueue } from "../steering/queue.js";
+import {
+  applyManagerChildExecution,
+  createManagerChildExecution,
+  type ManagerChildExecution,
+} from "../manager/child-execution.js";
 import { selectEdge } from "./edge-selection.js";
 import { buildRetryPolicy, delayForAttempt, sleep } from "./retry.js";
+import { preparePipeline } from "./pipeline.js";
 
 export interface RunConfig {
   backend?: CodergenBackend | null;
@@ -26,6 +35,7 @@ export interface RunConfig {
   logsRoot?: string;
   resumeFrom?: string;
   onEvent?: (event: PipelineEvent) => void;
+  onManagerChildExecution?: (execution: ManagerChildExecution) => void;
 }
 
 export interface RunResult {
@@ -68,8 +78,19 @@ export class PipelineRunner {
 
   private wireManagerLoopHandler(): void {
     const managerLoopHandler = this.registry.getManagerLoopHandler();
-    if (managerLoopHandler && this.config.managerObserverFactory) {
-      managerLoopHandler.setObserverFactory(this.config.managerObserverFactory);
+    if (managerLoopHandler) {
+      managerLoopHandler.setChildRuntimeFactory(
+        (input) => new PipelineManagerChildRuntime(input, this.config),
+      );
+      managerLoopHandler.setObserverFactory(async (input) => {
+        if (
+          input.childExecution.source === "dotfile" &&
+          input.childRuntime instanceof PipelineManagerChildRuntime
+        ) {
+          return new PipelineManagerChildRuntimeObserver(input.childRuntime);
+        }
+        return this.config.managerObserverFactory?.(input) ?? null;
+      });
     }
   }
 
@@ -690,6 +711,210 @@ export class PipelineRunner {
   get events(): EventEmitter {
     return this.emitter;
   }
+}
+
+class PipelineManagerChildRuntime implements ManagerChildRuntime {
+  private childExecution: ManagerChildExecution | null = null;
+  private childStarted = false;
+  private childCurrentNode: string | null = null;
+  private readonly childCompletedNodes: string[] = [];
+  private childResult: RunResult | null = null;
+  private childError: string | null = null;
+
+  constructor(
+    private readonly input: ManagerChildRuntimeFactoryInput,
+    private readonly runConfig: RunConfig,
+  ) {}
+
+  async ensureChildExecution(_context: Context): Promise<ManagerChildExecution> {
+    if (this.childExecution) {
+      return this.childExecution;
+    }
+
+    const parentRunId =
+      this.input.context.getString("internal.run_id") ||
+      this.runConfig.runId ||
+      path.basename(this.input.logsRoot);
+    const childDotfile = String(this.input.graph.attrs["stack.child_dotfile"] ?? "").trim();
+    const autostart =
+      String(this.input.graph.attrs["stack.child_autostart"] ?? "true").toLowerCase() !== "false";
+    const adapterExecutionId = this.input.context.getString("internal.last_completed_execution_id");
+    const adapterBranchKey = this.input.context.getString("internal.last_completed_branch_key");
+    const adapterNodeId = this.input.context.getString("internal.last_completed_node_id");
+
+    if (childDotfile) {
+      const resolvedDotfile = path.isAbsolute(childDotfile)
+        ? childDotfile
+        : path.resolve(process.cwd(), childDotfile);
+      const execution = createManagerChildExecution({
+        id: `${parentRunId}:${this.input.node.id}:child`,
+        runId: `${parentRunId}:${this.input.node.id}:child-run`,
+        ownerNodeId: this.input.node.id,
+        source: "dotfile",
+        autostart,
+        dotfile: resolvedDotfile,
+        ...((adapterExecutionId || adapterBranchKey || adapterNodeId)
+          ? {
+              adapterTarget: {
+                ...(adapterExecutionId ? { executionId: adapterExecutionId } : {}),
+                ...(adapterBranchKey ? { branchKey: adapterBranchKey } : {}),
+                ...(adapterNodeId ? { nodeId: adapterNodeId } : {}),
+              },
+            }
+          : {}),
+      });
+      this.childExecution = execution;
+      this.runConfig.onManagerChildExecution?.(execution);
+      return execution;
+    }
+
+    if (!adapterExecutionId) {
+      throw new Error("Manager loop child execution is missing");
+    }
+
+    const execution = createManagerChildExecution({
+      id: `${parentRunId}:${this.input.node.id}:attached-child`,
+      runId: parentRunId,
+      ownerNodeId: this.input.node.id,
+      source: "attached",
+      autostart: false,
+      adapterTarget: {
+        executionId: adapterExecutionId,
+        ...(adapterBranchKey ? { branchKey: adapterBranchKey } : {}),
+        ...(adapterNodeId ? { nodeId: adapterNodeId } : {}),
+      },
+    });
+    this.childExecution = execution;
+    this.runConfig.onManagerChildExecution?.(execution);
+    return execution;
+  }
+
+  async startChildExecution(context: Context): Promise<void> {
+    const execution = await this.ensureChildExecution(context);
+    if (execution.source !== "dotfile" || this.childStarted) {
+      return;
+    }
+    if (!execution.dotfile) {
+      throw new Error("Manager child DOT file is missing");
+    }
+    if (!fs.existsSync(execution.dotfile)) {
+      throw new Error(`Manager child DOT file not found: ${execution.dotfile}`);
+    }
+
+    this.childStarted = true;
+    const dotSource = fs.readFileSync(execution.dotfile, "utf-8");
+    const { graph } = preparePipeline(dotSource, { dotFilePath: execution.dotfile });
+    const childLogsRoot = path.join(this.input.logsRoot, ".manager-child", execution.id);
+    fs.mkdirSync(childLogsRoot, { recursive: true });
+
+    const childContext = context.clone();
+    applyManagerChildExecution(childContext, execution);
+
+    const childRunner = new PipelineRunner({
+      backend: this.runConfig.backend,
+      interviewer: this.runConfig.interviewer,
+      managerObserverFactory: this.runConfig.managerObserverFactory,
+      steeringQueue: this.runConfig.steeringQueue,
+      runId: execution.runId,
+      logsRoot: childLogsRoot,
+      onManagerChildExecution: this.runConfig.onManagerChildExecution,
+      onEvent: (event) => {
+        if (event.type === "stage_started") {
+          this.childCurrentNode = event.name;
+        }
+        if (
+          event.type === "stage_completed" &&
+          !this.childCompletedNodes.includes(event.name)
+        ) {
+          this.childCompletedNodes.push(event.name);
+          this.childCurrentNode = event.name;
+        }
+      },
+    });
+
+    void childRunner
+      .run(graph, childContext)
+      .then((result) => {
+        this.childResult = result;
+        this.childCurrentNode =
+          result.completedNodes[result.completedNodes.length - 1] ?? this.childCurrentNode;
+        for (const nodeId of result.completedNodes) {
+          if (!this.childCompletedNodes.includes(nodeId)) {
+            this.childCompletedNodes.push(nodeId);
+          }
+        }
+      })
+      .catch((err: unknown) => {
+        this.childError = String(err);
+      });
+  }
+
+  getSnapshot(): {
+    childStatus: "running" | "completed" | "failed";
+    childOutcome?: string;
+    telemetry: Record<string, unknown>;
+  } {
+    if (this.childError) {
+      return {
+        childStatus: "failed",
+        childOutcome: "error",
+        telemetry: {
+          current_node: this.childCurrentNode ?? "",
+          completed_nodes: [...this.childCompletedNodes],
+          failure_reason: this.childError,
+        },
+      };
+    }
+
+    if (this.childResult) {
+      const childOutcome = mapManagerChildOutcome(this.childResult.outcome.status);
+      return {
+        childStatus: this.childResult.outcome.status === StageStatus.FAIL ? "failed" : "completed",
+        ...(childOutcome ? { childOutcome } : {}),
+        telemetry: {
+          current_node: this.childCurrentNode ?? "",
+          completed_nodes: [...this.childCompletedNodes],
+        },
+      };
+    }
+
+    return {
+      childStatus: "running",
+      telemetry: {
+        current_node: this.childCurrentNode ?? "",
+        completed_nodes: [...this.childCompletedNodes],
+        autostarted: this.childStarted,
+      },
+    };
+  }
+}
+
+class PipelineManagerChildRuntimeObserver implements ManagerObserver {
+  constructor(private readonly childRuntime: PipelineManagerChildRuntime) {}
+
+  async observe(): Promise<{
+    childStatus: "running" | "completed" | "failed";
+    childOutcome?: string;
+    telemetry?: Record<string, unknown>;
+  }> {
+    return this.childRuntime.getSnapshot();
+  }
+}
+
+function mapManagerChildOutcome(status: StageStatus): string {
+  if (status === StageStatus.SUCCESS) {
+    return "success";
+  }
+  if (status === StageStatus.FAIL) {
+    return "error";
+  }
+  if (status === StageStatus.PARTIAL_SUCCESS) {
+    return "partial";
+  }
+  if (status === StageStatus.SKIPPED) {
+    return "skipped";
+  }
+  return String(status);
 }
 
 // Re-export RetryPolicy for the runner module

@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   InMemorySteeringQueue,
   createSteeringMessage,
-  getActiveManagerTarget,
 } from "../src/steering/queue.js";
+import {
+  applyManagerChildExecution,
+  createManagerChildExecution,
+  getManagerChildSteeringTarget,
+} from "../src/manager/child-execution.js";
 import { Context } from "../src/state/context.js";
 
 describe("InMemorySteeringQueue", () => {
@@ -57,18 +61,27 @@ describe("InMemorySteeringQueue", () => {
     expect(secondQueue.peek({ runId: "run-1" })).toEqual([]);
   });
 
-  it("builds the active manager target from last-completed execution context", () => {
-    const context = Context.fromSnapshot({
-      "internal.last_completed_execution_id": "exec-1",
-      "internal.last_completed_branch_key": "branch-a",
-      "internal.last_completed_node_id": "child",
-    });
+  it("builds the manager-owned steering target from explicit child execution context", () => {
+    const context = new Context();
+    applyManagerChildExecution(
+      context,
+      createManagerChildExecution({
+        id: "child-1",
+        runId: "run-1",
+        ownerNodeId: "manager",
+        source: "attached",
+        autostart: false,
+        adapterTarget: {
+          executionId: "exec-1",
+          branchKey: "branch-a",
+          nodeId: "child",
+        },
+      }),
+    );
 
-    expect(getActiveManagerTarget("run-1", context)).toEqual({
+    expect(getManagerChildSteeringTarget(context)).toEqual({
       runId: "run-1",
-      executionId: "exec-1",
-      branchKey: "branch-a",
-      nodeId: "child",
+      childExecutionId: "child-1",
     });
   });
 });

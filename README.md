@@ -118,7 +118,7 @@ This implementation covers the core execution engine, parser, validation, and al
 
 The spec checklists in [`docs/specs/`](docs/specs/) track what is and is not done.
 
-Manager loops now work end-to-end when the runtime is backed by `@attractor/backend-pi-dev`. Manager, CLI, and HTTP steering all enqueue process-local in-memory steering messages. The pi backend consumes those messages against the active execution when available, and queued steering is intentionally ephemeral across process restart or resume.
+Manager loops now own an explicit child execution. If `graph[stack.child_dotfile]` is set, the manager can start and supervise that child pipeline; if `graph[stack.child_autostart="false"]`, the manager attaches to an existing child execution instead of starting a new one. Manager, CLI, and HTTP steering all enqueue process-local in-memory steering messages against that manager-owned child execution, and queued steering is intentionally ephemeral across process restart or resume.
 
 This implementation adds:
 

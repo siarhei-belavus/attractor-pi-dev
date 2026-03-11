@@ -7,10 +7,15 @@ import { StageStatus, successOutcome, failOutcome } from "../state/types.js";
 import { applyFidelity, resolveEffectiveFidelity } from "../state/fidelity.js";
 import {
   createSteeringMessage,
-  getLastCompletedSteeringTarget,
   InMemorySteeringQueue,
   type SteeringQueue,
 } from "../steering/queue.js";
+import {
+  applyManagerChildExecution,
+  createManagerChildExecution,
+  getManagerChildExecution,
+  getManagerChildSteeringTarget,
+} from "../manager/child-execution.js";
 import type {
   Handler,
   CodergenBackend,
@@ -18,6 +23,7 @@ import type {
   QuestionOption,
   ManagerObserver,
   ManagerObserverFactory,
+  ManagerChildRuntimeFactory,
 } from "./types.js";
 import { QuestionType, AnswerValue } from "./types.js";
 import { evaluateCondition } from "../conditions/index.js";
@@ -795,6 +801,7 @@ function buildManagerConditionContext(
 export class ManagerLoopHandler implements Handler {
   private observer?: ManagerObserver;
   private observerFactory?: ManagerObserverFactory;
+  private childRuntimeFactory?: ManagerChildRuntimeFactory;
   private lastSteerTime = 0;
 
   constructor(private readonly steeringQueue: SteeringQueue = new InMemorySteeringQueue()) {}
@@ -806,6 +813,10 @@ export class ManagerLoopHandler implements Handler {
 
   setObserverFactory(factory: ManagerObserverFactory): void {
     this.observerFactory = factory;
+  }
+
+  setChildRuntimeFactory(factory: ManagerChildRuntimeFactory): void {
+    this.childRuntimeFactory = factory;
   }
 
   async execute(
@@ -831,15 +842,40 @@ export class ManagerLoopHandler implements Handler {
     const actions = new Set(actionsList);
     const steerCooldownMs = parseInt(String(node.attrs["manager.steer_cooldown_ms"] ?? String(pollIntervalMs)), 10);
 
+    const childRuntime = await this.childRuntimeFactory?.({
+      node,
+      context,
+      graph,
+      logsRoot,
+      steeringQueue: this.steeringQueue,
+    });
+    const childExecution =
+      (childRuntime
+        ? await childRuntime.ensureChildExecution(context)
+        : getManagerChildExecution(context) ?? inferAttachedManagerChildExecution(node, context)) ??
+      null;
+
+    if (childExecution) {
+      applyManagerChildExecution(context, childExecution);
+    }
+
+    if (childExecution?.autostart) {
+      await childRuntime?.startChildExecution(context);
+    }
+
     const observer =
       this.observer ??
-      (await this.observerFactory?.({
-        node,
-        context,
-        graph,
-        logsRoot,
-        steeringQueue: this.steeringQueue,
-      }));
+      (childExecution
+        ? await this.observerFactory?.({
+            node,
+            context,
+            graph,
+            logsRoot,
+            steeringQueue: this.steeringQueue,
+            childExecution,
+            ...(childRuntime ? { childRuntime } : {}),
+          })
+        : null);
 
     if (!observer) {
       return failOutcome("Manager loop observer wiring is missing");
@@ -1040,8 +1076,7 @@ export class ManagerLoopHandler implements Handler {
     if (!message) {
       return false;
     }
-
-    const target = getLastCompletedSteeringTarget(context);
+    const target = getManagerChildSteeringTarget(context);
     if (!target) {
       return false;
     }
@@ -1055,6 +1090,31 @@ export class ManagerLoopHandler implements Handler {
     );
     return true;
   }
+}
+
+function inferAttachedManagerChildExecution(
+  node: GraphNode,
+  context: Context,
+) {
+  const runId = context.getString("internal.run_id");
+  const executionId = context.getString("internal.last_completed_execution_id");
+  if (!runId || !executionId) {
+    return null;
+  }
+  const branchKey = context.getString("internal.last_completed_branch_key");
+  const nodeId = context.getString("internal.last_completed_node_id");
+  return createManagerChildExecution({
+    id: `${runId}:${node.id}:attached-child`,
+    runId,
+    ownerNodeId: node.id,
+    source: "attached",
+    autostart: false,
+    adapterTarget: {
+      executionId,
+      ...(branchKey ? { branchKey } : {}),
+      ...(nodeId ? { nodeId } : {}),
+    },
+  });
 }
 
 // ── Helpers ──

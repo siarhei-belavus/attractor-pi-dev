@@ -618,7 +618,7 @@ describe("HTTP Server: POST /pipelines/{id}/steer", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.data.delivery).toBe("queued");
-    expect(steeringQueue.peek({ runId, executionId: "child-thread", nodeId: "child" })).toMatchObject([
+    expect(steeringQueue.peek({ runId, childExecutionId: `${runId}:manager:attached-child` })).toMatchObject([
       {
         message: "Focus on the failing test first.",
         source: "api",
@@ -638,7 +638,7 @@ describe("HTTP Server: POST /pipelines/{id}/steer", () => {
     });
 
     expect(response.statusCode).toBe(409);
-    expect(response.data.error).toContain("active manager steering target");
+    expect(response.data.error).toContain("manager-owned child execution");
   });
 
   it("returns 409 when no active manager-loop-bound child session exists", async () => {

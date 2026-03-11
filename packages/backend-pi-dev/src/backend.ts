@@ -9,10 +9,10 @@ import type {
   CodergenBackend,
   GraphNode,
   Context,
+  ManagerChildExecution,
   Outcome,
   ManagerObserver,
   ManagerObserverFactory,
-  ManagerObserverFactoryInput,
   ObserveResult,
   SteeringQueue,
   SteeringTarget,
@@ -20,7 +20,6 @@ import type {
 import {
   StageStatus,
   getCurrentSteeringTarget,
-  getLastCompletedSteeringTarget,
 } from "@attractor/core";
 import {
   Session,
@@ -124,6 +123,7 @@ export class PiAgentCodergenBackend implements CodergenBackend {
   > & PiAgentBackendOptions;
   private sessions = new Map<string, Session>();
   private sessionMetadata = new Map<string, { provider: string; modelId: string }>();
+  private childExecutionBindings = new Map<string, SteeringTarget>();
   private authStorage: AuthStorage;
   private modelRegistry: ModelRegistry;
   private executionEnv?: ExecutionEnvironment;
@@ -205,7 +205,9 @@ export class PiAgentCodergenBackend implements CodergenBackend {
       };
     }
 
-    this.deliverSteeringMessages(this.resolveConsumerTarget(context), session);
+    const currentTarget = this.resolveConsumerTarget(context);
+    this.bindManagerChildExecution(currentTarget);
+    this.deliverSteeringMessages(currentTarget, session);
     this.emitSessionSnapshot("before_submit", session, threadKey, provider, modelId);
 
     // Send prompt and wait for completion
@@ -305,7 +307,7 @@ export class PiAgentCodergenBackend implements CodergenBackend {
   }
 
   createManagerObserverFactory(): ManagerObserverFactory {
-    return (input) => new PiManagerObserver(this, input);
+    return (input) => new PiManagerObserver(this, input.childExecution);
   }
 
   getObserverSnapshot(bindingKey: string): PiSessionObserverSnapshot | null {
@@ -404,8 +406,9 @@ export class PiAgentCodergenBackend implements CodergenBackend {
       return [];
     }
 
+    const boundTarget = this.resolveBoundTarget(target);
     const session = sessionOverride ?? (
-      target.executionId ? this.sessions.get(target.executionId) : undefined
+      boundTarget?.executionId ? this.sessions.get(boundTarget.executionId) : undefined
     );
     if (!session) {
       return [];
@@ -421,29 +424,75 @@ export class PiAgentCodergenBackend implements CodergenBackend {
   private resolveConsumerTarget(context: Context): SteeringTarget | null {
     return getCurrentSteeringTarget(context);
   }
+
+  private bindManagerChildExecution(target: SteeringTarget | null): void {
+    if (!target?.childExecutionId) {
+      return;
+    }
+    this.childExecutionBindings.set(
+      this.getChildExecutionBindingKey(target.runId, target.childExecutionId),
+      target,
+    );
+  }
+
+  private resolveBoundTarget(target: SteeringTarget): SteeringTarget | null {
+    if (target.childExecutionId) {
+      const bound = this.childExecutionBindings.get(
+        this.getChildExecutionBindingKey(target.runId, target.childExecutionId),
+      );
+      if (bound) {
+        return {
+          ...bound,
+          ...target,
+        };
+      }
+    }
+    return target;
+  }
+
+  resolveChildExecutionSessionId(childExecution: ManagerChildExecution): string {
+    if (childExecution.adapterTarget?.executionId) {
+      return childExecution.adapterTarget.executionId;
+    }
+    const bound = this.resolveBoundTarget({
+      runId: childExecution.runId,
+      childExecutionId: childExecution.id,
+    });
+    return bound?.executionId ?? "";
+  }
+
+  private getChildExecutionBindingKey(runId: string, childExecutionId: string): string {
+    return `${runId}::${childExecutionId}`;
+  }
 }
 
 class PiManagerObserver implements ManagerObserver {
-  private readonly executionId: string;
-  private readonly target: SteeringTarget;
-
   constructor(
     private readonly backend: PiAgentCodergenBackend,
-    input: ManagerObserverFactoryInput,
+    private readonly childExecution: ManagerChildExecution,
   ) {
-    const target = getLastCompletedSteeringTarget(input.context);
-    if (!target?.executionId) {
-      throw new Error("Manager loop child execution target is missing");
-    }
-    this.executionId = target.executionId;
-    this.target = target;
   }
 
   async observe(_context: Context): Promise<ObserveResult> {
-    this.backend.consumeQueuedSteering(this.target);
-    const snapshot = this.backend.getObserverSnapshot(this.executionId);
+    const target: SteeringTarget = {
+      runId: this.childExecution.runId,
+      childExecutionId: this.childExecution.id,
+      ...(this.childExecution.adapterTarget?.executionId
+        ? { executionId: this.childExecution.adapterTarget.executionId }
+        : {}),
+      ...(this.childExecution.adapterTarget?.branchKey
+        ? { branchKey: this.childExecution.adapterTarget.branchKey }
+        : {}),
+      ...(this.childExecution.adapterTarget?.nodeId
+        ? { nodeId: this.childExecution.adapterTarget.nodeId }
+        : {}),
+    };
+    this.backend.consumeQueuedSteering(target);
+    const snapshot = this.backend.getObserverSnapshot(
+      this.backend.resolveChildExecutionSessionId(this.childExecution),
+    );
     if (!snapshot) {
-      throw new Error(`Manager loop child session '${this.executionId}' is unavailable`);
+      throw new Error(`Manager loop child session '${this.childExecution.id}' is unavailable`);
     }
     return snapshot;
   }
