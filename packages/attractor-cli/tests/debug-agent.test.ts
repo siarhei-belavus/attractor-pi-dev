@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { createDebugAgentWriter } from "../src/debug-agent.js";
-import { runCommand, steerCommand } from "../src/index.js";
+import { runCommand, shouldRunAsCliEntry, steerCommand } from "../src/index.js";
 
 describe("debug agent writer", () => {
   const tempDirs: string[] = [];
@@ -114,6 +115,18 @@ describe("debug agent writer", () => {
     expect(tools).toContain("\"activeTools\"");
     expect(thread).toContain("[REDACTED]");
     expect(thread).not.toContain("should-hide");
+  });
+
+  it("treats a symlinked executable path as the CLI entrypoint", () => {
+    const root = mkdtempSync(join(tmpdir(), "attractor-cli-symlink-"));
+    tempDirs.push(root);
+
+    const realEntry = join(root, "real-entry.mjs");
+    const linkedEntry = join(root, "linked-entry.mjs");
+    writeFileSync(realEntry, "#!/usr/bin/env node\n");
+    symlinkSync(realEntry, linkedEntry);
+
+    expect(shouldRunAsCliEntry(linkedEntry, pathToFileURL(realEntry).href)).toBe(true);
   });
 
   it("sends steering requests through the HTTP API", async () => {

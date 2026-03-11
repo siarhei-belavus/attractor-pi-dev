@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   preparePipeline,
   PipelineRunner,
@@ -57,6 +57,18 @@ export async function main(argv: string[] = process.argv.slice(2), deps: CliDeps
     printUsage();
     process.exit(1);
   }
+}
+
+export function shouldRunAsCliEntry(
+  argv1: string | undefined = process.argv[1],
+  moduleUrl: string = import.meta.url,
+): boolean {
+  if (!argv1) return false;
+
+  const entryPath = fs.realpathSync(argv1);
+  const modulePath = fs.realpathSync(fileURLToPath(moduleUrl));
+  const entryHref = pathToFileURL(entryPath).href;
+  return moduleUrl === entryHref || modulePath === entryPath;
 }
 
 function printUsage() {
@@ -449,8 +461,7 @@ function printEvent(event: PipelineEvent, verbose: boolean) {
   }
 }
 
-const entryHref = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
-if (import.meta.url === entryHref) {
+if (shouldRunAsCliEntry()) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);
