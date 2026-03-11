@@ -92,6 +92,7 @@ export class CodergenHandler implements Handler {
       filteredContext.delete(key);
     }
     filteredContext.applyUpdates(filteredSnapshot);
+    preserveBackendRuntimeContext(context, filteredContext);
 
     // 4. Preamble synthesis (spec §9.2): when fidelity is not "full", prepend
     //    a text summary of the filtered context so the LLM has enough context
@@ -1133,6 +1134,14 @@ function inferAttachedManagerChildExecution(
 function syncBackendExecutionContext(source: Context, backendContext: Context): void {
   syncContextKey(source, backendContext, "internal.current_backend_execution_ref");
   syncContextKey(source, backendContext, "internal.last_completed_backend_execution_ref");
+}
+
+function preserveBackendRuntimeContext(source: Context, backendContext: Context): void {
+  syncContextKey(backendContext, source, "internal.run_id");
+  syncContextKey(backendContext, source, "internal.current_node_id");
+  syncContextKey(backendContext, source, "internal.current_branch_key");
+  syncContextKey(backendContext, source, "internal.thread_key");
+  syncContextKey(backendContext, source, "internal.manager_child_execution_id");
 }
 
 function syncContextKey(target: Context, source: Context, key: string): void {

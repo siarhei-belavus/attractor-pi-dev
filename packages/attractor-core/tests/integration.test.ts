@@ -167,6 +167,47 @@ describe("Integration: PipelineRunner", () => {
     expect(result.context.getString("graph.goal")).toBe("");
   });
 
+  it("preserves runtime node metadata for backend calls under compact fidelity", async () => {
+    const seen: Array<Record<string, string>> = [];
+    const { graph } = preparePipeline(`
+      digraph CompactRuntime {
+        graph [goal="Preserve runtime context", default_fidelity="compact"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        work [prompt="Do work"]
+        start -> work -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      backend: {
+        async run(_node, _prompt, context) {
+          seen.push({
+            runId: context.getString("internal.run_id"),
+            nodeId: context.getString("internal.current_node_id"),
+            branchKey: context.getString("internal.current_branch_key"),
+            threadKey: context.getString("internal.thread_key"),
+            childExecutionId: context.getString("internal.manager_child_execution_id"),
+          });
+          return "ok";
+        },
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      runId: expect.any(String),
+      nodeId: "work",
+      branchKey: "",
+      threadKey: "",
+      childExecutionId: "",
+    });
+  });
+
   it("fails exit when a declared goal gate was never visited", async () => {
     const { graph } = preparePipeline(`
       digraph MissingGoalGate {
