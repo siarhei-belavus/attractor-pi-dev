@@ -135,7 +135,7 @@ export class CodergenHandler implements Handler {
       notes: `Stage completed: ${node.id}`,
       contextUpdates: {
         last_stage: node.id,
-        last_response: responseText,
+        last_response: responseText.slice(0, 200),
       },
     };
     writeStatus(stageDir, outcome);
