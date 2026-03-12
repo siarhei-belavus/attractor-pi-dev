@@ -43,7 +43,7 @@ digraph ParallelCodeReview {
         label="Parallel Rubric Review",
         join_policy="wait_all",
         error_policy="continue",
-        max_parallel=6
+        max_parallel=5
     ]
 
     architecture_review [
@@ -60,14 +60,6 @@ digraph ParallelCodeReview {
         prompt="@prompts/complexity.md",
         context_keys="node.context_scan.last_response,node.validate.tool.output",
         thread_id="complexity"
-    ]
-
-    integration_review [
-        label="Integration Review",
-        class="specialist",
-        prompt="@prompts/integration.md",
-        context_keys="node.context_scan.last_response,node.validate.tool.output",
-        thread_id="integration"
     ]
 
     edge_case_review [
@@ -98,7 +90,7 @@ digraph ParallelCodeReview {
         shape=tripleoctagon,
         label="Merge Findings",
         prompt="@prompts/fan-in.md",
-        context_keys="node.architecture_review.last_response,node.complexity_review.last_response,node.integration_review.last_response,node.edge_case_review.last_response,node.tests_review.last_response,node.plan_review.last_response,node.validate.tool.output"
+        context_keys="node.architecture_review.last_response,node.complexity_review.last_response,node.edge_case_review.last_response,node.tests_review.last_response,node.plan_review.last_response,node.validate.tool.output"
     ]
 
     lead_summary [
@@ -128,14 +120,12 @@ digraph ParallelCodeReview {
 
     parallel_review -> architecture_review
     parallel_review -> complexity_review
-    parallel_review -> integration_review
     parallel_review -> edge_case_review
     parallel_review -> tests_review
     parallel_review -> plan_review
 
     architecture_review -> merge_findings
     complexity_review -> merge_findings
-    integration_review -> merge_findings
     edge_case_review -> merge_findings
     tests_review -> merge_findings
     plan_review -> merge_findings

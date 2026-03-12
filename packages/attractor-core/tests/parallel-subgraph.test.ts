@@ -382,10 +382,8 @@ describe("Parallel handler subgraph execution", () => {
       ]),
     });
     firstRunner.registerHandler("side_effect", {
-      async execute(_node, ctx) {
-        if (ctx.getString("current_node") === "parallel_node") {
-          sideEffectRuns++;
-        }
+      async execute() {
+        sideEffectRuns++;
         return { status: StageStatus.SUCCESS };
       },
     });
@@ -400,10 +398,8 @@ describe("Parallel handler subgraph execution", () => {
       interviewer: new QueueInterviewer([{ value: "A", questionId: "q-0001" }]),
     });
     resumedRunner.registerHandler("side_effect", {
-      async execute(_node, ctx) {
-        if (ctx.getString("current_node") === "parallel_node") {
-          sideEffectRuns++;
-        }
+      async execute() {
+        sideEffectRuns++;
         return { status: StageStatus.SUCCESS };
       },
     });
@@ -411,6 +407,74 @@ describe("Parallel handler subgraph execution", () => {
     const resumed = await resumedRunner.run(graph);
     expect(resumed.outcome.status).toBe(StageStatus.SUCCESS);
     expect(sideEffectRuns).toBe(1);
+  });
+
+  it("preserves sibling node artifacts and merges resumed branch artifacts after waiting", async () => {
+    const { graph } = preparePipeline(`
+      digraph ParallelResumeNodeArtifacts {
+        graph [goal="Preserve node-scoped artifacts across waiting resume"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        parallel_node [shape=component, label="Fan Out", join_policy="wait_all"]
+        branch_a [type="artifact_branch", label="Branch A"]
+        review_gate [shape=hexagon, label="Review branch"]
+        fan_in [shape=tripleoctagon, label="Fan In"]
+        start -> parallel_node
+        parallel_node -> branch_a
+        parallel_node -> review_gate
+        branch_a -> fan_in
+        review_gate -> fan_in [label="[A] Approve"]
+        fan_in -> exit
+      }
+    `);
+
+    const firstRunner = new PipelineRunner({
+      logsRoot: tmpDir,
+      interviewer: new QueueInterviewer([
+        { value: AnswerValue.WAITING, questionId: "q-node-artifacts" },
+      ]),
+    });
+    firstRunner.registerHandler("artifact_branch", {
+      async execute(node) {
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: {
+            marker: `${node.id}-done`,
+          },
+        };
+      },
+    });
+
+    const first = await firstRunner.run(graph);
+    expect(first.outcome.status).toBe(StageStatus.WAITING);
+    expect(first.context.getString("node.branch_a.marker")).toBe("branch_a-done");
+    expect(first.context.getString("node.branch_a.outcome")).toBe(StageStatus.SUCCESS);
+    expect(first.context.has("node.review_gate.outcome")).toBe(false);
+
+    const resumedRunner = new PipelineRunner({
+      logsRoot: tmpDir,
+      resumeFrom: tmpDir,
+      interviewer: new QueueInterviewer([
+        { value: "A", questionId: "q-node-artifacts" },
+      ]),
+    });
+    resumedRunner.registerHandler("artifact_branch", {
+      async execute(node) {
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: {
+            marker: `${node.id}-rerun`,
+          },
+        };
+      },
+    });
+
+    const resumed = await resumedRunner.run(graph);
+    expect(resumed.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(resumed.context.getString("node.branch_a.marker")).toBe("branch_a-done");
+    expect(resumed.context.getString("node.branch_a.outcome")).toBe(StageStatus.SUCCESS);
+    expect(resumed.context.getString("node.review_gate.outcome")).toBe(StageStatus.SUCCESS);
+    expect(resumed.context.getString("node.review_gate.human.gate.selected")).toBe("A");
   });
 
   it("wait_all blocks on waiting branch when no failures", async () => {
@@ -1309,10 +1373,9 @@ describe("error_policy for parallel handler", () => {
     expect(executedNodes).toContain("branch_b");
     expect(executedNodes).toContain("branch_c");
 
-    // The parallel branch outcomes still reflect first_success semantics,
-    // but the runner treats the failed branch stage as terminal when there
-    // is no explicit fail-edge or retry target.
-    expect(result.outcome.status).toBe(StageStatus.FAIL);
+    // first_success should advance through the shared fan-in once at least
+    // one branch succeeds, regardless of another branch failure.
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
 
     // Results should reflect 1 failure and 2 successes
     const parallelResults = JSON.parse(

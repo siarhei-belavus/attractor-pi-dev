@@ -776,12 +776,74 @@ export class PipelineRunner {
       return { toNode: retryTarget, edge: null };
     }
 
+    if (graph.resolveHandlerType(node) === "parallel") {
+      const joinNodeId = this.resolveParallelJoinNode(node, graph);
+      if (joinNodeId) {
+        return { toNode: joinNodeId, edge: null };
+      }
+    }
+
     const nextEdge = selectEdge(outgoing, outcome, context);
     if (!nextEdge) {
       return null;
     }
 
     return { toNode: nextEdge.toNode, edge: nextEdge };
+  }
+
+  private resolveParallelJoinNode(node: GraphNode, graph: Graph): string | null {
+    const branches = graph.outgoingEdges(node.id);
+    if (branches.length === 0) {
+      return null;
+    }
+
+    const boundarySets = branches.map((branch) =>
+      this.collectBranchBoundaryNodes(branch.toNode, graph),
+    );
+    if (boundarySets.some((set) => set.size === 0)) {
+      return null;
+    }
+
+    const [firstSet, ...restSets] = boundarySets;
+    if (!firstSet) {
+      return null;
+    }
+
+    const commonNodes = [...firstSet].filter((candidate) =>
+      restSets.every((set) => set.has(candidate)),
+    );
+
+    if (commonNodes.length !== 1) {
+      return null;
+    }
+
+    return commonNodes[0] ?? null;
+  }
+
+  private collectBranchBoundaryNodes(startNodeId: string, graph: Graph): Set<string> {
+    const boundaries = new Set<string>();
+    const queue = [startNodeId];
+    const visited = new Set<string>();
+
+    while (queue.length > 0) {
+      const currentNodeId = queue.shift();
+      if (!currentNodeId || visited.has(currentNodeId)) {
+        continue;
+      }
+      visited.add(currentNodeId);
+
+      const currentNode = graph.getNode(currentNodeId);
+      if (graph.isTerminal(currentNode) || this.isSubgraphBoundary(currentNode, graph)) {
+        boundaries.add(currentNodeId);
+        continue;
+      }
+
+      for (const edge of graph.outgoingEdges(currentNodeId)) {
+        queue.push(edge.toNode);
+      }
+    }
+
+    return boundaries;
   }
 
   private selectMatchingConditionalEdge(

@@ -15,7 +15,7 @@ describe("Example workflows", () => {
     const errors = diagnostics.filter((diag) => diag.severity === Severity.ERROR);
 
     expect(graph.id).toBe("ParallelCodeReview");
-    expect(graph.nodes.size).toBe(17);
+    expect(graph.nodes.size).toBe(16);
     expect(errors).toEqual([]);
     expect(graph.getNode("review_artifacts").shape).toBe("parallelogram");
     expect(graph.getNode("review_artifacts").attrs["tool_command"]).toContain("git status --short");
@@ -29,6 +29,9 @@ describe("Example workflows", () => {
     ]);
     expect(graph.getNode("merge_findings").contextKeys).toContain(
       "node.architecture_review.last_response",
+    );
+    expect(graph.getNode("merge_findings").contextKeys).not.toContain(
+      "node.integration_review.last_response",
     );
     expect(graph.getNode("lead_summary").contextKeys).toContain(
       "node.merge_findings.parallel.fan_in.llm_evaluation",

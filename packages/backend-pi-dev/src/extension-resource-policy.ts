@@ -20,6 +20,10 @@ const DEFAULT_POLICY: PiResourcePolicy = {
 const DISCOVERY_ENV = "ATTRACTOR_PI_RESOURCE_DISCOVERY";
 const ALLOWLIST_ENV = "ATTRACTOR_PI_RESOURCE_ALLOWLIST";
 
+function isSupportedExtensionSource(value: string): boolean {
+  return isAbsolute(value) || value.startsWith("npm:");
+}
+
 export function defaultPiResourcePolicy(): PiResourcePolicy {
   return { ...DEFAULT_POLICY, allowlist: [] };
 }
@@ -98,9 +102,9 @@ function normalizeInput(
     for (const item of input.allowlist) {
       const value = item.trim();
       if (!value) continue;
-      if (!isAbsolute(value)) {
+      if (!isSupportedExtensionSource(value)) {
         onWarning?.(
-          `Ignoring non-absolute extension path in ${source}: ${JSON.stringify(item)}`,
+          `Ignoring unsupported extension source in ${source}: ${JSON.stringify(item)}. Use an absolute path or npm:package spec.`,
         );
         continue;
       }
@@ -127,9 +131,9 @@ function parseAllowlist(
   const seen = new Set<string>();
   const valid: string[] = [];
   for (const entry of entries) {
-    if (!isAbsolute(entry)) {
+    if (!isSupportedExtensionSource(entry)) {
       onWarning?.(
-        `Ignoring non-absolute extension path from ${sourceLabel}: ${JSON.stringify(entry)}`,
+        `Ignoring unsupported extension source from ${sourceLabel}: ${JSON.stringify(entry)}. Use an absolute path or npm:package spec.`,
       );
       continue;
     }

@@ -8,7 +8,7 @@ The design is grounded in the following review principles:
 - Verification is cheaper than generation, so review work should be split into focused second-pass checks.
 - Human reviewers should read a compact merged packet, not five long reviewer streams.
 - If an implementation plan exists, the review should verify alignment against it explicitly.
-- AI-generated code needs extra pressure on integration points, implicit assumptions, edge cases, and missing tests.
+- AI-generated code needs extra pressure on architecture, complexity, edge cases, and missing tests.
 
 ## Review Topology
 
@@ -17,10 +17,9 @@ The design is grounded in the following review principles:
 2. `Run Validation`
    Runs a project-specific command such as tests or lint when one is provided. By default the stage is a safe no-op so the example can run in arbitrary repos.
 3. `Parallel Rubric Review`
-   Fans out to six specialists:
+   Fans out to five specialists:
    - architecture and ownership
    - complexity and simplification
-   - integration and implicit assumptions
    - edge cases and failure modes
    - tests and observability
    - conformance to the implementation plan
@@ -35,7 +34,6 @@ The design is grounded in the following review principles:
 
 - `Architecture Review` covers package boundaries, layering, ownership, and root-cause fixes.
 - `Complexity Review` pressures unnecessary abstraction, duplicated logic, and overbuilt interfaces.
-- `Integration Review` looks for the common AI failure mode: code that seems correct in isolation but does not fit real app flows.
 - `Edge-Case Review` hunts happy-path bias, boundary conditions, and fragile failure handling.
 - `Tests And Observability Review` converts quality questions into cheaper verification: tests, checks, logs, and invariants.
 - `Plan Conformance Review` checks whether the implementation follows the intended sequence, scope, and constraints when a plan was provided.
