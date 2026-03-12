@@ -547,6 +547,7 @@ export class ParallelHandler implements Handler {
           graph,
           logsRoot,
         );
+        mergeBranchNodeScopedContext(context, branchContext);
         results.set(index, outcome);
 
         if (errorPolicy === "fail_fast" && outcome.status === StageStatus.FAIL) {
@@ -564,6 +565,14 @@ export class ParallelHandler implements Handler {
 
     await Promise.all(branchIndexes.map((index) => executeBranch(index)));
     return results;
+  }
+}
+
+function mergeBranchNodeScopedContext(targetContext: Context, branchContext: Context): void {
+  const branchSnapshot = branchContext.snapshot();
+  for (const [key, value] of Object.entries(branchSnapshot)) {
+    if (!key.startsWith("node.")) continue;
+    targetContext.set(key, value);
   }
 }
 

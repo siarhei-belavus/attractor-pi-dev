@@ -131,6 +131,47 @@ describe("Parallel handler subgraph execution", () => {
     expect(result.context.has("parallel.results")).toBe(true);
   });
 
+  it("merges node-scoped branch outputs back into the main context", async () => {
+    const { graph } = preparePipeline(`
+      digraph NodeScopedMerge {
+        graph [goal="Test node-scoped branch context merge"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        parallel_node [shape=component, label="Fan Out"]
+        branch_a [type="branch_output", label="Branch A"]
+        branch_b [type="branch_output", label="Branch B"]
+        fan_in [shape=tripleoctagon, label="Fan In"]
+        start -> parallel_node
+        parallel_node -> branch_a
+        parallel_node -> branch_b
+        branch_a -> fan_in
+        branch_b -> fan_in
+        fan_in -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({ logsRoot: tmpDir });
+
+    runner.registerHandler("branch_output", {
+      async execute(node) {
+        return {
+          status: StageStatus.SUCCESS,
+          contextUpdates: {
+            marker: node.id,
+          },
+        };
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(result.context.getString("node.branch_a.marker")).toBe("branch_a");
+    expect(result.context.getString("node.branch_b.marker")).toBe("branch_b");
+    expect(result.context.getString("node.branch_a.outcome")).toBe(StageStatus.SUCCESS);
+    expect(result.context.getString("node.branch_b.outcome")).toBe(StageStatus.SUCCESS);
+  });
+
   it("does not leak branch-scoped steering through fan-in", async () => {
     const { graph } = preparePipeline(`
       digraph FanInSteeringIsolation {
