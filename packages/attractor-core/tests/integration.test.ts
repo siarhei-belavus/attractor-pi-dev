@@ -167,7 +167,7 @@ describe("Integration: PipelineRunner", () => {
     expect(result.context.getString("graph.goal")).toBe("");
   });
 
-  it("stores the truncated flat last_response in context", async () => {
+  it("stores the full last_response in context", async () => {
     const longResponse = "X".repeat(500);
     const { graph } = preparePipeline(`
       digraph FullResponse {
@@ -189,7 +189,7 @@ describe("Integration: PipelineRunner", () => {
     const result = await runner.run(graph);
 
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
-    expect(result.context.getString("last_response")).toBe(longResponse.slice(0, 200));
+    expect(result.context.getString("last_response")).toBe(longResponse);
   });
 
   it("mirrors flat context into node-scoped artifacts after completion", async () => {

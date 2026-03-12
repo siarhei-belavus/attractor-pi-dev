@@ -256,7 +256,7 @@ preferred_label                  Handler's preferred edge label
 
 ```
 last_stage                       Node ID of the completed stage
-last_response                    First 200 chars of the LLM response
+last_response                    Full LLM response
 ```
 
 **After human gates** (`shape=hexagon`):

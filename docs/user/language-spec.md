@@ -471,7 +471,7 @@ These are set by specific handlers via `context_updates` in their Outcome.
 | Key | Type | Description |
 |-----|------|-------------|
 | `last_stage` | String | Node ID of the last completed LLM stage. |
-| `last_response` | String | First 200 characters of the LLM response. |
+| `last_response` | String | Full LLM response text. |
 
 **Wait for human handler** (`shape=hexagon`):
 
