@@ -258,13 +258,36 @@ digraph SharedContext {
 }
 ```
 
+For non-adjacent handoff or provenance-safe reuse, prefer explicit prompt injection with node-scoped selectors instead of relying on whichever flat key was written most recently.
+
+```dot
+digraph ExplicitHandoff {
+    graph [goal="Review validated results"]
+
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    context_scan [label="Context Scan", prompt="@prompts/context-scan.md"]
+    validate     [shape=parallelogram, label="Validate", tool_command="npm test"]
+    review [
+        label="Review",
+        prompt="@prompts/review.md",
+        context_keys="node.context_scan.last_response,node.validate.tool.output"
+    ]
+
+    start -> context_scan -> validate -> review -> exit
+}
+```
+
+`review` receives a rendered workflow-handoff section containing exactly the requested artifacts. Missing selectors render as `<missing>`, and structured values render as pretty JSON.
+
 ## 10. Backend-Specific Pi Notes
 
 The pi development backend adds optional capabilities on top of the generic CLI/runtime contracts:
 
 - Debug telemetry: `--debug-agent` writes node-scoped prompt/tool artifacts plus thread-scoped session history when the backend supports it.
 - Attached backend execution supervision: manager loops can observe and steer a live backend-owned execution only when the backend exposes that capability.
-- Resource policy env vars: `ATTRACTOR_PI_RESOURCE_DISCOVERY` controls extension discovery (`auto` or `none`) and defaults to `none`; set it explicitly to `auto` to load home-directory pi extensions. `ATTRACTOR_PI_RESOURCE_ALLOWLIST` names explicit extension paths to load.
+- Resource policy env vars: `ATTRACTOR_PI_RESOURCE_DISCOVERY` controls extension discovery (`auto` or `none`) and defaults to `none`; set it explicitly to `auto` to load home-directory pi extensions. `ATTRACTOR_PI_RESOURCE_ALLOWLIST` names explicit extension sources to load, using either absolute paths or `npm:package` specs.
 
 Treat pi extension and prompt-shaping behavior as backend-specific configuration. Review enabled extensions before using them in production workflows.
 
@@ -436,6 +459,9 @@ Load only specific pi extensions, without auto-discovery:
 ```bash
 export ATTRACTOR_PI_RESOURCE_DISCOVERY=none
 export ATTRACTOR_PI_RESOURCE_ALLOWLIST="/abs/path/extensions/audit.ts,/abs/path/extensions/guards.ts"
+
+# Or load an explicit npm-hosted pi package
+export ATTRACTOR_PI_RESOURCE_ALLOWLIST="npm:pi-manage-todo-list"
 
 Opt in to home-directory pi extension discovery:
 

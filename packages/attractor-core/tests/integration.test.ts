@@ -167,6 +167,133 @@ describe("Integration: PipelineRunner", () => {
     expect(result.context.getString("graph.goal")).toBe("");
   });
 
+  it("stores the full last_response in context", async () => {
+    const longResponse = "X".repeat(500);
+    const { graph } = preparePipeline(`
+      digraph FullResponse {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        work [prompt="Do work"]
+        start -> work -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      backend: {
+        async run() {
+          return longResponse;
+        },
+      },
+    });
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(result.context.getString("last_response")).toBe(longResponse);
+  });
+
+  it("mirrors flat context into node-scoped artifacts after completion", async () => {
+    const { graph } = preparePipeline(`
+      digraph NodeScoped {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        scan [prompt="Scan"]
+        validate [shape=parallelogram, tool_command="printf 'ok\\n'"]
+        start -> scan -> validate -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      backend: {
+        async run() {
+          return "scan-output";
+        },
+      },
+    });
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(result.context.getString("last_response")).toBe("scan-output");
+    expect(result.context.getString("node.scan.last_response")).toBe("scan-output");
+    expect(result.context.getString("node.scan.outcome")).toBe("success");
+    expect(result.context.getString("node.validate.tool.output")).toContain("ok");
+    expect(result.context.getString("node.validate.outcome")).toBe("success");
+  });
+
+  it("injects requested context into prompts and writes debug artifacts", async () => {
+    const prompts: string[] = [];
+    const { graph } = preparePipeline(`
+      digraph PromptContext {
+        graph [default_fidelity="compact"]
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        scan [prompt="Scan repo"]
+        review [
+          prompt="Review findings",
+          context_keys="node.scan.last_response,node.scan.summary,missing.key"
+        ]
+        start -> scan -> review -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({
+      logsRoot: tmpDir,
+      backend: {
+        async run(node, prompt, context) {
+          prompts.push(prompt);
+          if (node.id === "scan") {
+            return {
+              status: StageStatus.SUCCESS,
+              contextUpdates: {
+                last_stage: node.id,
+                last_response: "scan response",
+                summary: { files: ["a.ts"], risk: "medium" },
+              },
+            };
+          }
+          expect(context.getString("node.scan.last_response")).toBe("scan response");
+          return "reviewed";
+        },
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(prompts).toHaveLength(2);
+    const reviewPrompt = prompts[1]!;
+    expect(reviewPrompt).toContain("## Context from previous stages");
+    expect(reviewPrompt).toContain("Review findings");
+    expect(reviewPrompt.indexOf("Review findings")).toBeGreaterThan(-1);
+    expect(reviewPrompt.indexOf("Review findings")).toBeLessThan(
+      reviewPrompt.indexOf("## Context From Previous Steps"),
+    );
+    expect(reviewPrompt).toContain("### scan: last_response");
+    expect(reviewPrompt).toContain("scan response");
+    expect(reviewPrompt).toContain("### scan: summary");
+    expect(reviewPrompt).toContain('"files": [');
+    expect(reviewPrompt).toContain("<missing>");
+
+    const promptArtifact = fs.readFileSync(path.join(tmpDir, "review", "prompt.md"), "utf-8");
+    expect(promptArtifact).toBe(reviewPrompt);
+
+    const contextArtifact = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "review", "context-inputs.json"), "utf-8"),
+    );
+    expect(contextArtifact.requestedSelectors).toEqual([
+      "node.scan.last_response",
+      "node.scan.summary",
+      "missing.key",
+    ]);
+    expect(contextArtifact.missingSelectors).toEqual(["missing.key"]);
+    expect(contextArtifact.resolvedInputs.map((entry: { heading: string }) => entry.heading)).toEqual([
+      "scan: last_response",
+      "scan: summary",
+      "missing.key",
+    ]);
+  });
+
   it("preserves runtime node metadata for backend calls under compact fidelity", async () => {
     const seen: Array<Record<string, string>> = [];
     const { graph } = preparePipeline(`

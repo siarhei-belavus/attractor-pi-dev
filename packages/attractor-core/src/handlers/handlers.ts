@@ -30,6 +30,7 @@ import { evaluateCondition } from "../conditions/index.js";
 import { parseDuration } from "../model/types.js";
 import { sleep } from "../engine/retry.js";
 import { synthesizePreamble, writeStatus } from "./shared/structured-evaluator.js";
+import { appendPromptContext, writePromptContextArtifact } from "./shared/prompt-context.js";
 export {
   ConfidenceGateHandler,
   FailureAnalyzeHandler,
@@ -71,11 +72,8 @@ export class CodergenHandler implements Handler {
     // 1. Build prompt
     let prompt = node.prompt || node.label;
     prompt = prompt.replaceAll("$goal", graph.attrs.goal);
-
-    // 2. Write original prompt to logs
     const stageDir = path.join(logsRoot, node.id);
     fs.mkdirSync(stageDir, { recursive: true });
-    fs.writeFileSync(path.join(stageDir, "prompt.md"), prompt);
 
     // 3. Build fidelity-filtered context for the LLM backend
     // Edge fidelity is stored in context by the runner before handler execution
@@ -94,6 +92,10 @@ export class CodergenHandler implements Handler {
     filteredContext.applyUpdates(filteredSnapshot);
     preserveBackendRuntimeContext(context, filteredContext);
 
+    const promptAssembly = appendPromptContext(node, graph, context, prompt);
+    prompt = promptAssembly.prompt;
+    writePromptContextArtifact(stageDir, promptAssembly.artifact);
+
     // 4. Preamble synthesis (spec §9.2): when fidelity is not "full", prepend
     //    a text summary of the filtered context so the LLM has enough context
     //    to continue work without full conversation history.
@@ -103,6 +105,8 @@ export class CodergenHandler implements Handler {
         prompt = preamble + "\n\n" + prompt;
       }
     }
+
+    fs.writeFileSync(path.join(stageDir, "prompt.md"), prompt);
 
     // 5. Call LLM backend
     let responseText: string;
@@ -131,7 +135,7 @@ export class CodergenHandler implements Handler {
       notes: `Stage completed: ${node.id}`,
       contextUpdates: {
         last_stage: node.id,
-        last_response: responseText.slice(0, 200),
+        last_response: responseText,
       },
     };
     writeStatus(stageDir, outcome);
@@ -588,9 +592,12 @@ export class FanInHandler implements Handler {
     // LLM-based evaluation: when the fan-in node has a prompt, call the
     // backend to rank candidates instead of using the heuristic.
     if (node.prompt && this.backend) {
+      const stageDir = path.join(logsRoot, node.id);
+      fs.mkdirSync(stageDir, { recursive: true });
       try {
+        const promptAssembly = appendPromptContext(node, graph, context, node.prompt);
         const evalPrompt =
-          node.prompt +
+          promptAssembly.prompt +
           "\n\n## Candidates\n" +
           results
             .map(
@@ -598,22 +605,30 @@ export class FanInHandler implements Handler {
                 `### Candidate ${i + 1}\n- Status: ${r.status}\n- Notes: ${r.notes ?? "(none)"}`,
             )
             .join("\n\n");
+        writePromptContextArtifact(stageDir, promptAssembly.artifact);
+        fs.writeFileSync(path.join(stageDir, "prompt.md"), evalPrompt);
 
         const backendResult = await this.backend.run(node, evalPrompt, context);
         if (typeof backendResult === "object" && "status" in backendResult) {
+          writeStatus(stageDir, backendResult as Outcome);
           return backendResult as Outcome;
         }
+        fs.writeFileSync(path.join(stageDir, "response.md"), String(backendResult));
 
         // Backend returned a string — treat it as notes on the selection
-        return successOutcome({
+        const outcome = successOutcome({
           contextUpdates: {
             "parallel.fan_in.best_outcome": StageStatus.SUCCESS,
             "parallel.fan_in.llm_evaluation": String(backendResult),
           },
           notes: `LLM evaluation: ${String(backendResult).slice(0, 200)}`,
         });
+        writeStatus(stageDir, outcome);
+        return outcome;
       } catch (err) {
-        return failOutcome(`Fan-in LLM evaluation failed: ${String(err)}`);
+        const outcome = failOutcome(`Fan-in LLM evaluation failed: ${String(err)}`);
+        writeStatus(stageDir, outcome);
+        return outcome;
       }
     }
 

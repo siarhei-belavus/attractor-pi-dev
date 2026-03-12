@@ -32,6 +32,25 @@ import { selectEdge } from "./edge-selection.js";
 import { buildRetryPolicy, delayForAttempt, sleep } from "./retry.js";
 import { preparePipeline } from "./pipeline.js";
 
+function mirrorNodeScopedContext(
+  context: Context,
+  nodeId: string,
+  outcome: Outcome,
+): void {
+  for (const [key, value] of Object.entries(outcome.contextUpdates ?? {})) {
+    if (key.startsWith("internal.")) continue;
+    context.set(`node.${nodeId}.${key}`, value);
+  }
+
+  context.set(`node.${nodeId}.outcome`, outcome.status);
+  if (outcome.failureReason) {
+    context.set(`node.${nodeId}.failure.reason`, outcome.failureReason);
+  }
+  if (outcome.preferredLabel) {
+    context.set(`node.${nodeId}.preferred_label`, outcome.preferredLabel);
+  }
+}
+
 export interface RunConfig {
   backend?: CodergenBackend | null;
   interviewer?: Interviewer;
@@ -169,6 +188,9 @@ export class PipelineRunner {
         context.applyUpdates(lastOutcome.contextUpdates as Record<string, unknown>);
       }
       applyOutcomeRuntimeContext(context, lastOutcome);
+      if (lastOutcome.status !== StageStatus.WAITING) {
+        mirrorNodeScopedContext(context, currentNode.id, lastOutcome);
+      }
       const completedThreadKey = context.getString("internal.thread_key");
       if (completedThreadKey) {
         context.set("internal.last_completed_thread_key", completedThreadKey);
@@ -500,6 +522,8 @@ export class PipelineRunner {
         });
         break;
       }
+
+      mirrorNodeScopedContext(context, node.id, outcome);
 
       const stageDuration = Date.now() - stageStart;
       this.emitter.emit({

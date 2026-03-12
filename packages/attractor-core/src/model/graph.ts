@@ -14,6 +14,7 @@ export interface GraphNode {
   fallbackRetryTarget: string;
   fidelity: string;
   threadId: string;
+  contextKeys: string[];
   classes: string[];
   timeout: number | null;
   llmModel: string;

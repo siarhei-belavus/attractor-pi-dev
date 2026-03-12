@@ -237,6 +237,14 @@ validate [prompt="Run all tests", goal_gate=true, retry_target="implement"]
 Context keys are a **fixed set** determined by the handlers. You cannot set arbitrary
 keys from the DOT file or via LLM responses.
 
+For prompt handoff, Attractor also mirrors user-visible values under node-scoped keys:
+
+```
+node.<node_id>.<context_key>
+```
+
+Prefer these node-scoped selectors in `context_keys` so downstream prompts do not depend on latest-value overwrite behavior.
+
 **Available after every node:**
 
 ```
@@ -248,7 +256,7 @@ preferred_label                  Handler's preferred edge label
 
 ```
 last_stage                       Node ID of the completed stage
-last_response                    First 200 chars of the LLM response
+last_response                    Full LLM response
 ```
 
 **After human gates** (`shape=hexagon`):
@@ -280,6 +288,25 @@ graph.goal                       Mirrored from graph[goal]
 current_node                     ID of the executing node
 internal.retry_count.<node_id>   Retry counter per node
 ```
+
+## Prompt Context Injection
+
+Use `context_keys` on LLM nodes to append explicit workflow handoff inputs to the rendered prompt.
+
+```dot
+review [
+    prompt="@prompts/review.md",
+    context_keys="node.context_scan.last_response,node.validate.tool.output"
+]
+```
+
+Rules:
+
+- Order is preserved as authored.
+- Missing values render as `<missing>`.
+- Empty strings render as `<empty>`.
+- Objects and arrays render as pretty JSON blocks.
+- Flat keys work, but may point at the latest overwritten value instead of a specific producer.
 
 ## Loop Restart
 

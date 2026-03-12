@@ -6,6 +6,7 @@ import { applyFidelity, resolveEffectiveFidelity } from "../../state/fidelity.js
 import type { Outcome } from "../../state/types.js";
 import { failOutcome } from "../../state/types.js";
 import type { CodergenBackend } from "../types.js";
+import { appendPromptContext, writePromptContextArtifact } from "./prompt-context.js";
 
 export type StructuredObject = Record<string, unknown>;
 
@@ -48,11 +49,13 @@ export async function executeStructuredBackend(
   );
   const filteredSnapshot = applyFidelity(context.snapshot(), fidelityMode);
   const filteredContext = Context.fromSnapshot(filteredSnapshot);
+  const promptAssembly = appendPromptContext(node, graph, context, prompt);
   const promptWithContext = fidelityMode !== "full"
-    ? [synthesizePreamble(filteredSnapshot), prompt].filter(Boolean).join("\n\n")
-    : prompt;
+    ? [synthesizePreamble(filteredSnapshot), promptAssembly.prompt].filter(Boolean).join("\n\n")
+    : promptAssembly.prompt;
 
   fs.writeFileSync(path.join(stageDir, "prompt.md"), promptWithContext);
+  writePromptContextArtifact(stageDir, promptAssembly.artifact);
 
   try {
     const result = await backend.run(node, promptWithContext, filteredContext);

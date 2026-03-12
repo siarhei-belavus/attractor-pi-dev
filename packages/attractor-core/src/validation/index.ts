@@ -341,6 +341,66 @@ const promptOnLlmNodesRule: LintRule = {
   },
 };
 
+function validateContextSelector(selector: string): string | null {
+  if (!selector.trim()) {
+    return "selectors must not be empty";
+  }
+  if (/\s/.test(selector)) {
+    return "selectors must not contain whitespace";
+  }
+  const segments = selector.split(".");
+  if (segments.some((segment) => segment.length === 0)) {
+    return "selectors must not contain empty path segments";
+  }
+  return null;
+}
+
+const contextKeysValidRule: LintRule = {
+  name: "context_keys_valid",
+  apply(graph) {
+    const diags: Diagnostic[] = [];
+    for (const node of graph.nodes.values()) {
+      const raw = String(node.attrs["context_keys"] ?? "");
+      if (!raw) continue;
+
+      const authoredEntries = raw.split(",");
+      for (const entry of authoredEntries) {
+        const trimmed = entry.trim();
+        const error = validateContextSelector(trimmed);
+        if (error) {
+          diags.push({
+            rule: "context_keys_valid",
+            severity: Severity.ERROR,
+            message: `Invalid context_keys on node '${node.id}': ${error}`,
+            nodeId: node.id,
+          });
+          break;
+        }
+      }
+    }
+    return diags;
+  },
+};
+
+const contextKeysFlatUsageRule: LintRule = {
+  name: "context_keys_flat_usage",
+  apply(graph) {
+    const diags: Diagnostic[] = [];
+    for (const node of graph.nodes.values()) {
+      const flatSelectors = node.contextKeys.filter((selector) => !selector.startsWith("node."));
+      if (flatSelectors.length === 0) continue;
+      diags.push({
+        rule: "context_keys_flat_usage",
+        severity: Severity.WARNING,
+        message:
+          `Node '${node.id}' uses flat context_keys (${flatSelectors.join(", ")}); latest-value semantics may be overwritten by later stages`,
+        nodeId: node.id,
+      });
+    }
+    return diags;
+  },
+};
+
 const varsDeclaredRule: LintRule = {
   name: "vars_declared",
   apply(graph) {
@@ -421,6 +481,8 @@ export const BUILT_IN_RULES: LintRule[] = [
   retryTargetExistsRule,
   goalGateHasRetryRule,
   promptOnLlmNodesRule,
+  contextKeysValidRule,
+  contextKeysFlatUsageRule,
   varsDeclaredRule,
   promptFileExistsRule,
   promptCommandExistsRule,

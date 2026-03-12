@@ -23,6 +23,7 @@ function makeManagerNode(
     fallbackRetryTarget: "",
     fidelity: "",
     threadId: "",
+    contextKeys: [],
     classes: [],
     timeout: null,
     llmModel: "",

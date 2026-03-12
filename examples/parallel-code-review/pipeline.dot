@@ -1,0 +1,148 @@
+digraph ParallelCodeReview {
+    graph [
+        goal="Review $review_scope in $repo_path with parallel rubric specialists",
+        label="Parallel multi-agent code review",
+        vars="repo_path=., review_scope=pending code changes, validation_command=, implementation_plan_path=",
+        model_stylesheet="
+            * { llm_model: gpt-5.1-codex-mini; llm_provider: openai-codex; reasoning_effort: medium; }
+            .lead { llm_model: gpt-5.1-codex-mini; llm_provider: openai-codex; reasoning_effort: high; }
+            .specialist { llm_model: gpt-5.1-codex-mini; llm_provider: openai-codex; reasoning_effort: high; }
+        "
+    ]
+    rankdir=TB
+
+    node [fidelity="full", timeout="1800s"]
+
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    review_artifacts [
+        shape=parallelogram,
+        label="Collect Review Artifacts",
+        tool_command="cd \"$repo_path\" && printf '== REVIEW SCOPE ==\\n%s\\n' \"$review_scope\" && if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf '\\n== GIT STATUS ==\\n' && git status --short && printf '\\n== GIT DIFF STAT ==\\n' && git diff --stat && printf '\\n== UNTRACKED FILES ==\\n' && git ls-files --others --exclude-standard; else printf '\\n== GIT STATUS ==\\n<not a git repository>\\n'; fi && if [ -n \"$implementation_plan_path\" ]; then printf '\\n== IMPLEMENTATION PLAN: %s ==\\n' \"$implementation_plan_path\" && cat \"$implementation_plan_path\"; else printf '\\n== IMPLEMENTATION PLAN ==\\n<none provided>\\n'; fi"
+    ]
+
+    context_scan [
+        label="Context Scan",
+        class="lead",
+        prompt="@prompts/context-scan.md",
+        context_keys="node.review_artifacts.tool.output",
+        thread_id="lead"
+    ]
+
+    validate [
+        shape=parallelogram,
+        label="Run Validation",
+        tool_command="cd \"$repo_path\" && if [ -n \"$validation_command\" ]; then eval \"$validation_command\"; else printf 'No validation command configured; skipped.\\n'; fi"
+    ]
+
+    validation_gate [shape=diamond, label="Validation status"]
+
+    parallel_review [
+        shape=component,
+        label="Parallel Rubric Review",
+        join_policy="wait_all",
+        error_policy="continue",
+        max_parallel=6
+    ]
+
+    architecture_review [
+        label="Architecture Review",
+        class="specialist",
+        prompt="@prompts/architecture.md",
+        context_keys="node.context_scan.last_response,node.validate.tool.output",
+        thread_id="architecture"
+    ]
+
+    complexity_review [
+        label="Complexity Review",
+        class="specialist",
+        prompt="@prompts/complexity.md",
+        context_keys="node.context_scan.last_response,node.validate.tool.output",
+        thread_id="complexity"
+    ]
+
+    integration_review [
+        label="Integration Review",
+        class="specialist",
+        prompt="@prompts/integration.md",
+        context_keys="node.context_scan.last_response,node.validate.tool.output",
+        thread_id="integration"
+    ]
+
+    edge_case_review [
+        label="Edge-Case Review",
+        class="specialist",
+        prompt="@prompts/edge-cases.md",
+        context_keys="node.context_scan.last_response,node.validate.tool.output",
+        thread_id="edge-cases"
+    ]
+
+    tests_review [
+        label="Tests And Observability Review",
+        class="specialist",
+        prompt="@prompts/tests.md",
+        context_keys="node.context_scan.last_response,node.validate.tool.output",
+        thread_id="tests"
+    ]
+
+    plan_review [
+        label="Plan Conformance Review",
+        class="specialist",
+        prompt="@prompts/plan-conformance.md",
+        context_keys="node.context_scan.last_response,node.validate.tool.output",
+        thread_id="plan"
+    ]
+
+    merge_findings [
+        shape=tripleoctagon,
+        label="Merge Findings",
+        prompt="@prompts/fan-in.md",
+        context_keys="node.architecture_review.last_response,node.complexity_review.last_response,node.integration_review.last_response,node.edge_case_review.last_response,node.tests_review.last_response,node.plan_review.last_response,node.validate.tool.output"
+    ]
+
+    lead_summary [
+        label="Lead Summary",
+        class="lead",
+        prompt="@prompts/lead-summary.md",
+        context_keys="node.context_scan.last_response,node.merge_findings.parallel.fan_in.llm_evaluation,node.validate.tool.output",
+        thread_id="lead"
+    ]
+
+    review_gate [
+        shape=hexagon,
+        label="Review Packet Decision"
+    ]
+
+    follow_up [
+        label="Fix Request Packet",
+        class="lead",
+        prompt="@prompts/follow-up.md",
+        context_keys="node.lead_summary.last_response",
+        thread_id="lead"
+    ]
+
+    start -> review_artifacts -> context_scan -> validate -> validation_gate
+    validation_gate -> parallel_review [condition="outcome=success", label="Checks passed"]
+    validation_gate -> parallel_review [condition="outcome!=success", label="Review with failing checks"]
+
+    parallel_review -> architecture_review
+    parallel_review -> complexity_review
+    parallel_review -> integration_review
+    parallel_review -> edge_case_review
+    parallel_review -> tests_review
+    parallel_review -> plan_review
+
+    architecture_review -> merge_findings
+    complexity_review -> merge_findings
+    integration_review -> merge_findings
+    edge_case_review -> merge_findings
+    tests_review -> merge_findings
+    plan_review -> merge_findings
+
+    merge_findings -> lead_summary -> review_gate
+    review_gate -> exit         [label="[A] Accept review packet"]
+    review_gate -> follow_up    [label="[F] Turn into fix request"]
+    review_gate -> context_scan [label="[R] Re-run on updated diff", fidelity="full", thread_id="lead"]
+    follow_up -> exit
+}

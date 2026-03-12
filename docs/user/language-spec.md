@@ -88,6 +88,7 @@ Declared in a `graph [ ... ]` block or as top-level `key = value` declarations.
 | `fallback_retry_target` | String   | `""`          | Secondary jump target. |
 | `fidelity`              | String   | inherited     | Context fidelity mode for LLM session. |
 | `thread_id`             | String   | derived       | Thread identifier for LLM session reuse. |
+| `context_keys`          | String   | `""`          | Comma-separated runtime context selectors injected into the prompt. |
 | `class`                 | String   | `""`          | Comma-separated class names for stylesheet targeting. |
 | `timeout`               | Duration | unset         | Maximum execution time. |
 | `llm_model`             | String   | inherited     | LLM model identifier. |
@@ -386,6 +387,61 @@ Manager-loop runtime contract:
 
 During execution, the pipeline engine maintains a key-value context that handlers read from and write to. Understanding these keys is essential for writing edge conditions and understanding pipeline state.
 
+### Two-Layer Context Model
+
+Attractor keeps two additive context layers:
+
+- Flat latest-value keys such as `last_response`, `tool.output`, `outcome`, and `parallel.results`.
+  These remain the routing and backward-compatibility layer.
+- Node-scoped artifact keys such as `node.review.last_response` and `node.validate.tool.output`.
+  These are provenance-safe prompt handoff selectors for later stages.
+
+The node-scoped layer does not replace the flat layer. The runner writes both.
+
+### Prompt Injection With `context_keys`
+
+LLM nodes can request explicit workflow handoff inputs with:
+
+```dot
+reviewer [
+  prompt="@prompts/review.md",
+  context_keys="node.context_scan.last_response,node.validate.tool.output"
+]
+```
+
+Rules:
+
+- Entries are comma-separated, trimmed, and resolved in authored order.
+- Selectors may reference either flat keys or node-scoped keys.
+- Docs and examples should prefer `node.<node_id>.<context_key>` for stable handoff.
+- Missing selectors do not fail the node. They render as `<missing>` and are reported in debug artifacts.
+- Empty string values render as `<empty>`.
+
+### Prompt Rendering Contract
+
+When a node declares `context_keys`, Attractor appends a workflow handoff section to the effective prompt.
+
+```md
+## Context From Previous Steps
+
+The following artifacts were produced by earlier pipeline steps and are provided as workflow inputs for this stage.
+Use them as grounded context, but verify against the repository or direct tool inspection when accuracy matters.
+
+### Context Scan: last_response
+
+<rendered value>
+```
+
+Rendering rules:
+
+- `string` values render as-is.
+- `number` and `boolean` values render as strings.
+- `object` and `array` values render as pretty JSON in fenced code blocks.
+- `node.<node_id>.<key>` headings use the node label when available, otherwise the node id.
+- Flat-key headings use the key name directly.
+- Missing values render as `<missing>`.
+- Empty strings render as `<empty>`.
+
 ### Engine-Set Keys
 
 These are set automatically by the execution engine.
@@ -396,6 +452,7 @@ These are set automatically by the execution engine.
 | `current_node` | String | ID of the currently executing node. |
 | `outcome` | String | Last handler's outcome status: `success`, `fail`, `partial_success`, `retry`, `skipped`. |
 | `preferred_label` | String | Last handler's preferred edge label (if any). |
+| `failure.reason` | String | Failure reason from the last failed or retrying outcome, when present. |
 | `internal.retry_count.<node_id>` | Integer | Retry counter for a specific node (e.g., `internal.retry_count.implement`). |
 | `internal.incoming_edge_fidelity` | String | Fidelity mode from the incoming edge (for handler use). |
 | `internal.incoming_edge_thread_id` | String | Thread ID from the incoming edge (for handler use). |
@@ -414,7 +471,7 @@ These are set by specific handlers via `context_updates` in their Outcome.
 | Key | Type | Description |
 |-----|------|-------------|
 | `last_stage` | String | Node ID of the last completed LLM stage. |
-| `last_response` | String | First 200 characters of the LLM response. |
+| `last_response` | String | Full LLM response text. |
 
 **Wait for human handler** (`shape=hexagon`):
 
@@ -469,6 +526,26 @@ These are set by specific handlers via `context_updates` in their Outcome.
 | `stack.child.outcome` | String | Child pipeline outcome. |
 | `stack.manager_loop.child.id` | String | Stable manager-owned child execution identifier. |
 | `stack.manager_loop.child.run_id` | String | Run ID used for queued steering and child supervision. |
+
+### Node-Scoped Artifact Keys
+
+After a node completes, the runner automatically mirrors user-visible context writes under:
+
+```text
+node.<node_id>.<context_key>
+```
+
+Examples:
+
+- `node.context_scan.last_response`
+- `node.validate.tool.output`
+- `node.parallel_review.parallel.results`
+
+Mirroring rules:
+
+- Every key written through `Outcome.contextUpdates` is mirrored automatically.
+- Runtime-applied engine keys are also mirrored when present: `outcome`, `failure.reason`, and `preferred_label`.
+- Internal engine keys under `internal.*` are not mirrored into the node-scoped namespace.
 
 ### What You Can Route On
 
@@ -531,7 +608,7 @@ check -> fail [condition="stack.child.status=failed"]
 check -> skip [condition="graph.goal contains \"optional\""]
 ```
 
-Note: `outcome` and `preferred_label` are the primary routing mechanisms for most pipelines. The other keys are useful for specific handler types. Conditions on LLM response content (`last_response`) are limited to the first 200 characters.
+Note: `outcome` and `preferred_label` are the primary routing mechanisms for most pipelines. The other flat keys are useful for specific handler types. Prefer node-scoped keys for prompt handoff across non-adjacent stages.
 
 External steering semantics:
 
@@ -549,6 +626,7 @@ External steering semantics:
 | `parallel.*`  | Parallel/fan-in handlers | Branch results and evaluation. |
 | `stack.*`     | Manager loop handler | Child pipeline state. |
 | `manager.*`   | Manager loop handler | Observation cycle state. |
+| `node.*`      | Runner mirror | Node-scoped artifact copies of user-visible context writes. |
 | `tool.*`      | Tool handler | Command output. |
 | (no prefix)   | Engine/codergen | `outcome`, `preferred_label`, `last_stage`, `last_response`, `current_node`. |
 
@@ -572,3 +650,5 @@ External steering semantics:
 | `retry_target_exists`   | WARNING  | Retry targets must reference existing nodes. |
 | `goal_gate_has_retry`   | WARNING  | Goal gate nodes should have retry targets. |
 | `prompt_on_llm_nodes`   | WARNING  | Codergen nodes should have a `prompt` or `label`. |
+| `context_keys_valid`    | ERROR    | `context_keys` must be a valid comma-separated selector list. |
+| `context_keys_flat_usage` | WARNING | Flat-key prompt injection keeps latest-value semantics and may be overwritten later. |

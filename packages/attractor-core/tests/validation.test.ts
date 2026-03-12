@@ -250,6 +250,7 @@ describe("Validation", () => {
       fallbackRetryTarget: "",
       fidelity: "",
       threadId: "",
+      contextKeys: [],
       classes: [],
       timeout: null,
       llmModel: "",
@@ -333,5 +334,57 @@ describe("Validation", () => {
     const condErrors = diags.filter((d) => d.rule === "condition_syntax");
     expect(condErrors.length).toBe(1);
     expect(condErrors[0]!.severity).toBe(Severity.ERROR);
+  });
+
+  it("parses context_keys in authored order", () => {
+    const ast = parseDot(`
+      digraph G {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        review [
+          prompt="Review",
+          context_keys="node.scan.last_response, node.validate.tool.output"
+        ]
+        start -> review -> exit
+      }
+    `);
+    const graph = buildGraph(ast);
+
+    expect(graph.getNode("review").contextKeys).toEqual([
+      "node.scan.last_response",
+      "node.validate.tool.output",
+    ]);
+  });
+
+  it("errors on malformed context_keys entries", () => {
+    const diags = buildAndValidate(`
+      digraph G {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        review [prompt="Review", context_keys="node.scan.last_response, ,node.validate.tool.output"]
+        start -> review -> exit
+      }
+    `);
+
+    const contextErrors = diags.filter((d) => d.rule === "context_keys_valid");
+    expect(contextErrors.length).toBe(1);
+    expect(contextErrors[0]!.severity).toBe(Severity.ERROR);
+    expect(contextErrors[0]!.nodeId).toBe("review");
+  });
+
+  it("warns when context_keys uses flat keys", () => {
+    const diags = buildAndValidate(`
+      digraph G {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        review [prompt="Review", context_keys="last_response,node.scan.last_response"]
+        start -> review -> exit
+      }
+    `);
+
+    const warnings = diags.filter((d) => d.rule === "context_keys_flat_usage");
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]!.severity).toBe(Severity.WARNING);
+    expect(warnings[0]!.nodeId).toBe("review");
   });
 });

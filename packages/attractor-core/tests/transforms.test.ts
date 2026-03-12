@@ -18,6 +18,7 @@ function makeNode(
     fallbackRetryTarget: "",
     fidelity: "",
     threadId: "",
+    contextKeys: [],
     classes: [],
     timeout: null,
     llmModel: "",

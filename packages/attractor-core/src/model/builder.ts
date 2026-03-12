@@ -48,6 +48,11 @@ interface BuildContext {
   subgraphLabel?: string;
 }
 
+function parseContextKeys(raw: string): string[] {
+  if (!raw.trim()) return [];
+  return raw.split(",").map((entry) => entry.trim());
+}
+
 /** Build a semantic Graph from an AST */
 export function buildGraph(ast: AstGraph): Graph {
   const nodes = new Map<string, GraphNode>();
@@ -221,6 +226,7 @@ function buildNode(
     fallbackRetryTarget: get("fallback_retry_target"),
     fidelity: get("fidelity"),
     threadId: get("thread_id"),
+    contextKeys: parseContextKeys(get("context_keys")),
     classes,
     timeout,
     llmModel: get("llm_model"),
