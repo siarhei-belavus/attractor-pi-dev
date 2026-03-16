@@ -29,14 +29,15 @@ import type {
 } from "./types.js";
 import { QuestionType, AnswerValue } from "./types.js";
 import {
-  HUMAN_INTERVIEW_PARSED_ATTR,
   validateHumanPromptAnswers,
 } from "./human-prompt.js";
+import { resolveHumanInterviewPrompt } from "./human-prompt-resolver.js";
 import { evaluateCondition } from "../conditions/index.js";
 import { parseDuration } from "../model/types.js";
 import { sleep } from "../engine/retry.js";
 import { synthesizePreamble, writeStatus } from "./shared/structured-evaluator.js";
 import { appendPromptContext, writePromptContextArtifact } from "./shared/prompt-context.js";
+import { QuestionStore } from "../server/question-store.js";
 export {
   ConfidenceGateHandler,
   FailureAnalyzeHandler,
@@ -283,24 +284,39 @@ export class HumanInterviewHandler implements Handler {
     node: GraphNode,
     context: Context,
     _graph: Graph,
-    _logsRoot: string,
+    logsRoot: string,
   ): Promise<Outcome> {
-    const parsedQuestions = node.attrs[HUMAN_INTERVIEW_PARSED_ATTR];
-    if (!Array.isArray(parsedQuestions) || parsedQuestions.length === 0) {
-      return failOutcome(
-        `Node '${node.id}' is missing validated ${HUMAN_INTERVIEW_PARSED_ATTR} questions`,
-      );
+    const resumeQuestionId = context.getString("internal.waiting_for_question_id");
+    let prompt: HumanPrompt;
+    let resumedPrompt: HumanPrompt | null = null;
+
+    try {
+      if (resumeQuestionId) {
+        prompt = {
+          title: node.label || node.id,
+          stage: node.id,
+          questions: [],
+          metadata: {
+            handlerType: "human.interview",
+            resumeQuestionId,
+          },
+        };
+        resumedPrompt = this.readPersistedPrompt(logsRoot, resumeQuestionId, node.id);
+      } else {
+        prompt = resolveHumanInterviewPrompt(node, context, logsRoot);
+        prompt = {
+          ...prompt,
+          metadata: {
+            ...(prompt.metadata ?? {}),
+            handlerType: "human.interview",
+            resumeQuestionId: "",
+          },
+        };
+      }
+    } catch (error) {
+      return failOutcome(String(error));
     }
 
-    const prompt: HumanPrompt = {
-      title: node.label || node.id,
-      stage: node.id,
-      questions: parsedQuestions as HumanPromptQuestion[],
-      metadata: {
-        handlerType: "human.interview",
-        resumeQuestionId: context.getString("internal.waiting_for_question_id"),
-      },
-    };
     const response = await this.interviewer.ask(prompt);
 
     if (response.state === "waiting") {
@@ -334,7 +350,12 @@ export class HumanInterviewHandler implements Handler {
       });
     }
 
-    const validated = validateHumanPromptAnswers(prompt, response.answers ?? {});
+    const promptForValidation =
+      resumedPrompt ??
+      (response.promptId && resumeQuestionId
+        ? this.readPersistedPrompt(logsRoot, response.promptId, node.id)
+        : prompt);
+    const validated = validateHumanPromptAnswers(promptForValidation, response.answers ?? {});
     const contextUpdates: Record<string, unknown> = {
       "human.interview.answers": validated.scalarValues,
       "internal.waiting_for_question_id": "",
@@ -349,6 +370,16 @@ export class HumanInterviewHandler implements Handler {
     }
 
     return successOutcome({ contextUpdates });
+  }
+
+  private readPersistedPrompt(logsRoot: string, questionId: string, nodeId: string): HumanPrompt {
+    const record = new QuestionStore(logsRoot).get(questionId);
+    if (!record) {
+      throw new Error(
+        `Resume prompt '${questionId}' for human interview '${nodeId}' was not found`,
+      );
+    }
+    return record.prompt;
   }
 }
 

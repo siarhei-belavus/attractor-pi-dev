@@ -6,6 +6,7 @@ import {
   parseStylesheet,
   resolveStyleProperties,
 } from "../stylesheet/index.js";
+import { HUMAN_INTERVIEW_PROMPT_FILE_ATTR } from "../handlers/human-prompt.js";
 
 /** Transform interface: modifies the graph between parsing and validation */
 export interface Transform {
@@ -153,6 +154,15 @@ export class PromptResolutionTransform implements Transform {
     };
 
     for (const node of graph.nodes.values()) {
+      const promptFileAttr = node.attrs[HUMAN_INTERVIEW_PROMPT_FILE_ATTR];
+      if (
+        typeof promptFileAttr === "string" &&
+        promptFileAttr.trim().length > 0 &&
+        !path.isAbsolute(promptFileAttr)
+      ) {
+        node.attrs[HUMAN_INTERVIEW_PROMPT_FILE_ATTR] = path.resolve(dotFileDir, promptFileAttr);
+      }
+
       // Resolve @file / /command in tool attributes
       for (const attrKey of ["tool_command", "pre_hook", "post_hook"] as const) {
         const val = node.attrs[attrKey];
@@ -220,7 +230,13 @@ export class VariableExpansionTransform implements Transform {
       if (node.label) node.label = expand(node.label);
 
       // Expand variables in tool attributes
-      for (const attrKey of ["tool_command", "pre_hook", "post_hook"] as const) {
+      for (const attrKey of [
+        "tool_command",
+        "pre_hook",
+        "post_hook",
+        HUMAN_INTERVIEW_PROMPT_FILE_ATTR,
+        "human.prompt_context_key",
+      ] as const) {
         const val = node.attrs[attrKey];
         if (typeof val === "string") {
           node.attrs[attrKey] = expand(val);

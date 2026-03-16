@@ -6,8 +6,11 @@ import {
   type HumanPromptQuestion,
   type QuestionOption,
 } from "./types.js";
+import * as path from "node:path";
 
 export const HUMAN_INTERVIEW_QUESTIONS_ATTR = "human.questions";
+export const HUMAN_INTERVIEW_PROMPT_FILE_ATTR = "human.prompt_file";
+export const HUMAN_INTERVIEW_PROMPT_CONTEXT_KEY_ATTR = "human.prompt_context_key";
 export const HUMAN_INTERVIEW_PARSED_ATTR = "internal.human.questions";
 
 export interface NormalizedPromptAnswer {
@@ -52,6 +55,19 @@ export function validateHumanPrompt(prompt: unknown): HumanPrompt {
     questions,
     ...(metadata ? { metadata } : {}),
   };
+}
+
+export function validateNormalizedPromptFileAttr(value: unknown): string {
+  const promptFile = readRequiredString(
+    value,
+    `Human interview ${HUMAN_INTERVIEW_PROMPT_FILE_ATTR} must be a non-empty string`,
+  ).trim();
+  if (!path.isAbsolute(promptFile)) {
+    throw new Error(
+      `Human interview ${HUMAN_INTERVIEW_PROMPT_FILE_ATTR} must resolve to an absolute path`,
+    );
+  }
+  return promptFile;
 }
 
 export function validateHumanPromptAnswers(

@@ -4,6 +4,8 @@ import { validateConditionSyntax } from "../conditions/index.js";
 import { validateStylesheetSyntax } from "../stylesheet/index.js";
 import {
   HUMAN_INTERVIEW_PARSED_ATTR,
+  HUMAN_INTERVIEW_PROMPT_CONTEXT_KEY_ATTR,
+  HUMAN_INTERVIEW_PROMPT_FILE_ATTR,
   HUMAN_INTERVIEW_QUESTIONS_ATTR,
   isHumanPromptQuestionType,
 } from "../handlers/human-prompt.js";
@@ -358,7 +360,54 @@ const humanInterviewQuestionsRule: LintRule = {
         continue;
       }
 
-      const raw = node.attrs[HUMAN_INTERVIEW_QUESTIONS_ATTR];
+      const rawQuestions = node.attrs[HUMAN_INTERVIEW_QUESTIONS_ATTR];
+      const rawPromptFile = node.attrs[HUMAN_INTERVIEW_PROMPT_FILE_ATTR];
+      const rawPromptContextKey = node.attrs[HUMAN_INTERVIEW_PROMPT_CONTEXT_KEY_ATTR];
+      const definedSources = [
+        [HUMAN_INTERVIEW_QUESTIONS_ATTR, rawQuestions],
+        [HUMAN_INTERVIEW_PROMPT_FILE_ATTR, rawPromptFile],
+        [HUMAN_INTERVIEW_PROMPT_CONTEXT_KEY_ATTR, rawPromptContextKey],
+      ].filter(([, value]) => value !== undefined);
+
+      if (definedSources.length !== 1) {
+        diags.push({
+          rule: "human_interview_questions",
+          severity: Severity.ERROR,
+          message:
+            `Node '${node.id}' requires exactly one of ` +
+            `${HUMAN_INTERVIEW_QUESTIONS_ATTR}, ` +
+            `${HUMAN_INTERVIEW_PROMPT_FILE_ATTR}, or ` +
+            `${HUMAN_INTERVIEW_PROMPT_CONTEXT_KEY_ATTR}`,
+          nodeId: node.id,
+        });
+        continue;
+      }
+
+      if (rawPromptFile !== undefined) {
+        if (typeof rawPromptFile !== "string" || rawPromptFile.trim().length === 0) {
+          diags.push({
+            rule: "human_interview_questions",
+            severity: Severity.ERROR,
+            message: `Node '${node.id}' requires ${HUMAN_INTERVIEW_PROMPT_FILE_ATTR} as a non-empty string`,
+            nodeId: node.id,
+          });
+        }
+        continue;
+      }
+
+      if (rawPromptContextKey !== undefined) {
+        if (typeof rawPromptContextKey !== "string" || rawPromptContextKey.trim().length === 0) {
+          diags.push({
+            rule: "human_interview_questions",
+            severity: Severity.ERROR,
+            message: `Node '${node.id}' requires ${HUMAN_INTERVIEW_PROMPT_CONTEXT_KEY_ATTR} as a non-empty string`,
+            nodeId: node.id,
+          });
+        }
+        continue;
+      }
+
+      const raw = rawQuestions;
       if (typeof raw !== "string" || raw.trim().length === 0) {
         diags.push({
           rule: "human_interview_questions",
@@ -368,7 +417,6 @@ const humanInterviewQuestionsRule: LintRule = {
         });
         continue;
       }
-
       try {
         const parsed = JSON.parse(raw) as unknown;
         const questions = parseHumanInterviewQuestions(node, parsed);

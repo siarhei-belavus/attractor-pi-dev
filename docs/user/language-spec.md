@@ -130,7 +130,7 @@ These handlers are available only through explicit `type="..."` values in the cu
 
 | Type | Purpose | Key attrs | Key outputs |
 |------|---------|-----------|-------------|
-| `human.interview` | Collect one or more human answers into context without routing by edge. | `human.questions` | `human.interview.answers`, `human.interview.<key>`, `human.interview.<key>.label` |
+| `human.interview` | Collect one or more human answers into context without routing by edge. | Exactly one of `human.questions`, `human.prompt_file`, or `human.prompt_context_key` | `human.interview.answers`, `human.interview.<key>`, `human.interview.<key>.label` |
 | `judge.rubric` | Structured rubric evaluation over a context artifact. | `judge.input_key`, `judge.threshold`, `judge.criteria` | `judge.rubric.score`, `judge.rubric.summary`, `judge.rubric.result` |
 | `failure.analyze` | Structured failure classification for downstream routing. | `failure.input_key`, `failure.hints` | `failure.analyze.class`, `failure.analyze.summary`, `failure.analyze.recommendation` |
 | `confidence.gate` | Deterministic autonomy vs escalation decision. | `confidence.threshold`, `confidence.score_key`, `confidence.failure_class_key`, `confidence.escalate_classes` | `confidence.gate.decision`, `confidence.gate.score`, `confidence.gate.reason` |
@@ -141,7 +141,13 @@ These handlers are available only through explicit `type="..."` values in the cu
 - `wait.human` remains the `shape=hexagon` routing gate and chooses the next edge from a single multiple-choice answer.
 - `human.interview` is opt-in via `type="human.interview"` and writes data into context instead of selecting an outgoing edge.
 
-`human.interview` authoring uses `human.questions` as a JSON array string:
+`human.interview` authoring must define exactly one prompt source:
+
+- `human.questions` for inline JSON
+- `human.prompt_file` for a canonical `HumanPrompt` JSON file
+- `human.prompt_context_key` for a canonical `HumanPrompt` already stored in runtime context
+
+Inline authoring uses `human.questions` as a JSON array string:
 
 ```dot
 collect_deploy_input [
@@ -154,6 +160,20 @@ collect_deploy_input [
   ]"
 ]
 ```
+
+File-backed authoring uses a canonical `HumanPrompt` JSON artifact:
+
+```dot
+collect_deploy_input [
+  type="human.interview",
+  label="Collect deployment input",
+  human.prompt_file="$run_dir/clarifications/attractor-human-prompt.json"
+]
+```
+
+`human.prompt_file` is resolved during pipeline preparation. Relative paths are normalized against the DOT file directory when `dotFilePath` is known. At runtime, the loaded JSON must validate as a canonical `HumanPrompt`.
+
+Once a `human.interview` prompt enters `WAITING`, Attractor freezes that resolved prompt in the durable question record. Resume reuses the persisted prompt instead of re-reading `human.prompt_file` or re-resolving `human.prompt_context_key`, so in-flight prompts cannot drift if the source artifact changes.
 
 ## Chained Edges
 
@@ -226,7 +246,7 @@ The search path for `/command` lookups:
 
 ## Variable Expansion
 
-Variables declared in `graph[vars]` are expanded as `$name` in `prompt`, `label`, `tool_command`, `pre_hook`, and `post_hook` attributes.
+Variables declared in `graph[vars]` are expanded as `$name` in `prompt`, `label`, `tool_command`, `pre_hook`, `post_hook`, `human.prompt_file`, and `human.prompt_context_key` attributes.
 
 ```dot
 digraph Feature {

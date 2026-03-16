@@ -489,6 +489,18 @@ Downstream nodes can read:
 - `human.interview.strategy`
 - `node.collect.human.interview.strategy`
 
+The node can also load the same canonical prompt shape from a runtime JSON artifact:
+
+```dot
+collect [
+    type="human.interview",
+    label="Collect deployment input",
+    human.prompt_file="$run_dir/clarifications/attractor-human-prompt.json"
+]
+```
+
+`human.interview` must define exactly one of `human.questions`, `human.prompt_file`, or `human.prompt_context_key`. After the node enters `WAITING`, resume uses the persisted prompt record, not the original source, so edits to the backing artifact do not change an in-flight interview.
+
 ## 16. Approval Plus Notes
 
 Use `wait.human` for routing and `human.interview` for data capture when you need both.

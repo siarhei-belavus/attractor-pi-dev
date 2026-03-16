@@ -100,6 +100,43 @@ describe("DurableInterviewer", () => {
       fs.rmSync(logsRoot, { recursive: true, force: true });
     }
   });
+
+  it("reuses the persisted pending prompt on resume", async () => {
+    const logsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "durable-interviewer-"));
+    try {
+      writeQuestionRecord(logsRoot, {
+        id: "q-0001",
+        runId: "run-1",
+        nodeId: "collect",
+        stage: "collect",
+        status: "pending",
+        prompt: makePrompt("q-0001"),
+        answers: null,
+        createdAt: new Date(0).toISOString(),
+        answeredAt: null,
+        metadata: {},
+      });
+
+      let waitingRecord: QuestionRecord | null = null;
+      const interviewer = new DurableInterviewer(
+        "run-1",
+        new QuestionStore(logsRoot),
+        { onWaiting(record) { waitingRecord = record; } },
+      );
+
+      const response = await interviewer.ask({
+        title: "Changed prompt",
+        stage: "collect",
+        questions: [],
+        metadata: { resumeQuestionId: "q-0001" },
+      });
+
+      expect(response).toEqual({ state: "waiting", promptId: "q-0001" });
+      expect(waitingRecord?.prompt.questions[0]?.key).toBe("approved");
+    } finally {
+      fs.rmSync(logsRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 function writeQuestionRecord(logsRoot: string, record: QuestionRecord): void {

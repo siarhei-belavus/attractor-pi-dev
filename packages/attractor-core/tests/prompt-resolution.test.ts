@@ -105,6 +105,39 @@ describe("Prompt Resolution: @file includes", () => {
 
     expect(graph.getNode("work").prompt).toBe("@some-file.md");
   });
+
+  it("normalizes human.prompt_file relative to the DOT file", () => {
+    const promptsDir = path.join(tmpDir, "clarifications");
+    fs.mkdirSync(promptsDir, { recursive: true });
+    const promptPath = path.join(promptsDir, "prompt.json");
+    fs.writeFileSync(
+      promptPath,
+      JSON.stringify({
+        title: "Clarifications",
+        stage: "collect",
+        questions: [{ key: "approved", text: "Approve?", type: "yes_no" }],
+      }),
+    );
+
+    const dotPath = path.join(tmpDir, "pipeline.dot");
+    fs.writeFileSync(
+      dotPath,
+      `
+        digraph Test {
+          graph [goal="Test human prompt resolution"]
+          start [shape=Mdiamond]
+          exit  [shape=Msquare]
+          collect [type="human.interview", human.prompt_file="clarifications/prompt.json"]
+          start -> collect -> exit
+        }
+      `,
+    );
+
+    const source = fs.readFileSync(dotPath, "utf-8");
+    const { graph } = preparePipeline(source, { dotFilePath: dotPath });
+
+    expect(graph.getNode("collect").attrs["human.prompt_file"]).toBe(promptPath);
+  });
 });
 
 describe("Prompt Resolution: /command lookups", () => {

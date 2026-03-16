@@ -148,6 +148,42 @@ describe("Validation", () => {
     expect(errors).toHaveLength(0);
   });
 
+  it("accepts human.interview prompt_file as the only prompt source", () => {
+    const diags = buildAndValidate(`
+      digraph G {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        collect [
+          type="human.interview",
+          human.prompt_file="/tmp/clarifications/prompt.json"
+        ]
+        start -> collect -> exit
+      }
+    `);
+    const errors = diags.filter((d) => d.severity === Severity.ERROR);
+    expect(errors).toHaveLength(0);
+  });
+
+  it("errors when human.interview defines more than one prompt source", () => {
+    const diags = buildAndValidate(`
+      digraph G {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        collect [
+          type="human.interview",
+          human.questions="[
+            {\\"key\\":\\"approved\\",\\"text\\":\\"Approve deployment?\\",\\"type\\":\\"yes_no\\"}
+          ]",
+          human.prompt_file="/tmp/clarifications/prompt.json"
+        ]
+        start -> collect -> exit
+      }
+    `);
+    const errors = diags.filter((d) => d.rule === "human_interview_questions");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.message).toContain("exactly one");
+  });
+
   it("errors on malformed human.interview questions", () => {
     const diags = buildAndValidate(`
       digraph G {

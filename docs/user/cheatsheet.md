@@ -53,6 +53,12 @@ collect [
     ]"
 ]
 
+// Human interview from a runtime prompt file
+collect_dynamic [
+    type="human.interview",
+    human.prompt_file="$run_dir/clarifications/attractor-human-prompt.json"
+]
+
 // Conditional routing point
 check [shape=diamond, label="Tests pass?"]
 
@@ -105,6 +111,11 @@ Recognized patterns: `[K] Label`, `K) Label`, `K - Label`.
 - `human.interview.<question_key>`
 - `human.interview.<question_key>.label` for `multiple_choice`
 - `node.<node_id>.human.interview.*` mirrors for provenance-safe reads
+
+Prompt source rule:
+
+- Define exactly one of `human.questions`, `human.prompt_file`, or `human.prompt_context_key`
+- Once the prompt is waiting, resume reuses the persisted prompt instead of re-reading the source
 
 ## Condition Expressions
 
