@@ -360,6 +360,14 @@ export class PipelineRunner {
               degradeNextFidelity = true;
             }
           } else {
+            const lastHandlerType = graph.resolveHandlerType(lastNode);
+            if (lastHandlerType === "wait.human") {
+              currentNode = lastNode;
+              context.delete("failure.reason");
+              const idx = completedNodes.lastIndexOf(lastCompletedId);
+              if (idx >= 0) completedNodes.splice(idx, 1);
+              nodeOutcomes.delete(lastCompletedId);
+            } else
             if (
               lastCompletedOutcome.status === StageStatus.FAIL ||
               lastCompletedOutcome.status === StageStatus.PARTIAL_SUCCESS
