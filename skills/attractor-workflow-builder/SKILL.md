@@ -1,6 +1,6 @@
 ---
 name: attractor-workflow-builder
-description: Build and modify Attractor DOT workflows for attractor-pi-dev. Use when users want to create, adapt, validate, debug, or explain `.dot` pipelines; choose node shapes or explicit handler types; write edge conditions; configure prompts, variables, model stylesheets, or shared thread context; or design human gates, tool stages, parallel branches, governance handlers, and manager loops.
+description: Build and modify Attractor DOT workflows for attractor-pi-dev. Use when users want to create, adapt, validate, debug, or explain `.dot` pipelines; choose node shapes or explicit handler types; write edge conditions; configure prompts, variables, model stylesheets, shared thread context, or `context_keys`; or design human gates, tool stages, parallel branches, governance handlers, manager loops, and node-scoped prompt handoff.
 ---
 
 # Attractor Workflow Builder
@@ -17,6 +17,7 @@ This repo is not Factorial. Keep the workflow language grounded in Attractor's a
 4. Borrow patterns from repo examples before inventing new syntax:
    - `examples/ralph-wiggum/pipeline.dot`
    - `examples/spec-to-beads/pipeline.dot`
+   - `examples/parallel-code-review/pipeline.dot`
    - `packages/attractor-cli/tests/golden/workflows/*.dot`
 5. Validate before handoff with the local CLI binary available in the environment:
    - `attractor validate workflow.dot`
@@ -43,6 +44,11 @@ When behavior is unclear, verify against:
   - an attached backend execution via backend capability, not implicit thread/session reuse
 - Variables must come from `graph[vars]`; when `vars` is declared, undeclared `$name` references are validation errors.
 - Context keys are a closed set produced by the engine and handlers. Do not invent `ctx.*` writes or assume arbitrary LLM output becomes routable context.
+- Attractor now has a two-layer context model:
+  - flat latest-value keys such as `last_response`, `tool.output`, `outcome`
+  - node-scoped mirrors such as `node.context_scan.last_response`, `node.validate.tool.output`
+- Use flat keys mainly for routing and backward-compatible latest-value semantics.
+- Use `context_keys` plus node-scoped selectors for provenance-safe handoff across non-adjacent stages.
 - Prompt resolution supports:
   - inline prompt text
   - `@relative/file.md`
@@ -56,6 +62,8 @@ When behavior is unclear, verify against:
 - Prefer prompt files for long instructions instead of large inline strings.
 - Use `thread_id` and `fidelity` intentionally when multiple LLM stages should share context.
 - Do not treat `thread_id` as a generic execution handle. It is for session reuse only.
+- For prompt handoff, prefer `context_keys="node.<producer>.<key>,..."` over flat keys like `last_response` or `tool.output`.
+- Treat `context_keys` as authored-order input selection. Missing selectors render as `<missing>`; empty strings render as `<empty>`.
 - Use edge `condition` and `weight` for routing; do not rely on unsupported custom routing fields.
 - Keep governance flows deterministic by routing on built-in keys like `outcome`, `human.gate.selected`, `tool.output`, `judge.rubric.*`, or `confidence.gate.*`.
 - Validate after edits, then dry-run with simulation if the workflow shape changed.
@@ -75,6 +83,26 @@ digraph Hello {
     start -> greet -> exit
 }
 ```
+
+### Explicit Node-Scoped Handoff
+
+```dot
+digraph ReviewFlow {
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    scan [prompt="@prompts/scan.md"]
+    validate [shape=parallelogram, tool_command="pnpm test"]
+    review [
+        prompt="@prompts/review.md",
+        context_keys="node.scan.last_response,node.validate.tool.output"
+    ]
+
+    start -> scan -> validate -> review -> exit
+}
+```
+
+Use this pattern when a later LLM node needs stable artifacts from specific earlier stages rather than whichever flat key was written most recently.
 
 ### Implement / Validate Loop
 
@@ -129,6 +157,8 @@ branch_b -> merge
 merge -> exit
 ```
 
+For prompt-based fan-in or lead-summary stages, explicitly pull branch outputs through `context_keys` instead of assuming `last_response` or `parallel.results` latest-value behavior is enough.
+
 ### Manager Loop
 
 ```dot
@@ -153,6 +183,9 @@ For an attached backend execution, do not try to encode backend handles in DOT a
   - `attractor run workflow.dot --simulate --verbose`
 - Capture backend/tool diagnostics when needed:
   - `attractor run workflow.dot --debug-agent`
+- When a node uses `context_keys`, inspect:
+  - `<logsRoot>/<nodeId>/prompt.md`
+  - `<logsRoot>/<nodeId>/context-inputs.json`
 - Expect `--debug-agent` artifacts to split by meaning:
   - node-level: `<logsRoot>/<nodeId>/system-prompt.md`, `active-tools.json`
   - thread-level: `<logsRoot>/debug/threads/<sessionKey>/session-events.jsonl`, `latest-snapshot.json`

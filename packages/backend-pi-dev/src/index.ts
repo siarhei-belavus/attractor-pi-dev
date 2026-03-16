@@ -1,9 +1,25 @@
+import type { BackendFactoryOptions, CodergenBackend } from "@attractor/core";
+
 // Backend (Attractor integration)
 export { PiAgentCodergenBackend } from "./backend.js";
 export type {
   PiAgentBackendOptions,
   PiSessionObserverSnapshot,
 } from "./backend.js";
+import { PiAgentCodergenBackend } from "./backend.js";
+
+export function createPiBackendFactory():
+  (options: BackendFactoryOptions) => CodergenBackend {
+  return (options) =>
+    new PiAgentCodergenBackend({
+      cwd: options.cwd,
+      steeringQueue: options.steeringQueue,
+      ...(options.provider ? { defaultProvider: options.provider } : {}),
+      ...(options.model ? { defaultModel: options.model } : {}),
+      ...(options.debugSink ? { debugSink: options.debugSink } : {}),
+      ...(options.warningSink ? { onWarning: options.warningSink } : {}),
+    });
+}
 
 // Session
 export { Session, SessionState } from "./session.js";

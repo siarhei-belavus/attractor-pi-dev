@@ -22,6 +22,7 @@ Use this file when choosing a node shape or explicit handler type.
 
 Typical attributes:
 - `prompt`
+- `context_keys`
 - `label`
 - `thread_id`
 - `fidelity`
@@ -74,6 +75,8 @@ Produced key:
 - `parallel.results`
 
 `shape=tripleoctagon` merges branch results.
+
+If the merge stage uses an LLM prompt, prefer explicit `context_keys` for branch handoff instead of assuming flat latest-value context is enough.
 
 Produced keys:
 - `parallel.fan_in.best_outcome`

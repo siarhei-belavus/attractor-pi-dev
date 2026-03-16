@@ -1,11 +1,17 @@
-import { existsSync, readFileSync } from "node:fs";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 export interface PackagedRunResult {
   stdout: string;
   stderr: string;
+}
+
+export interface InstalledCliArtifact {
+  installRoot: string;
+  binPath: string;
+  cleanup: () => void;
 }
 
 export function expandHome(input: string): string {
@@ -79,14 +85,62 @@ export async function stopChild(child: ChildProcessWithoutNullStreams | null): P
   });
 }
 
-export async function runPackagedCli(
-  distEntry: string,
+function runCommand(command: string, args: string[], cwd: string): void {
+  try {
+    execFileSync(command, args, {
+      cwd,
+      env: process.env,
+      stdio: "pipe",
+    });
+  } catch (error) {
+    const stderr = error instanceof Error && "stderr" in error ? String(error.stderr ?? "") : "";
+    const stdout = error instanceof Error && "stdout" in error ? String(error.stdout ?? "") : "";
+    throw new Error(
+      `Command failed: ${command} ${args.join(" ")}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
+    );
+  }
+}
+
+function packWorkspacePackage(workspaceRoot: string, packageDirName: string, tarballsDir: string): string {
+  const packageDir = join(workspaceRoot, "packages", packageDirName);
+  const before = new Set(readdirSync(tarballsDir));
+  runCommand("pnpm", ["pack", "--pack-destination", tarballsDir], packageDir);
+  const after = readdirSync(tarballsDir).filter((entry) => entry.endsWith(".tgz") && !before.has(entry));
+  if (after.length !== 1) {
+    throw new Error(`Expected one tarball for ${packageDirName}, found ${after.length}.`);
+  }
+  return join(tarballsDir, after[0]!);
+}
+
+export function installPackedCliFromWorkspace(workspaceRoot: string): InstalledCliArtifact {
+  const tempRoot = mkdtempSync(join(tmpdir(), "attractor-cli-install-"));
+  const tarballsDir = join(tempRoot, "tarballs");
+  const installRoot = join(tempRoot, "install");
+  mkdirSync(tarballsDir, { recursive: true });
+  mkdirSync(installRoot, { recursive: true });
+
+  const coreTarball = packWorkspacePackage(workspaceRoot, "attractor-core", tarballsDir);
+  const backendTarball = packWorkspacePackage(workspaceRoot, "backend-pi-dev", tarballsDir);
+  const cliTarball = packWorkspacePackage(workspaceRoot, "attractor-cli", tarballsDir);
+
+  runCommand("npm", ["init", "-y"], installRoot);
+  runCommand("npm", ["install", "--no-package-lock", coreTarball, backendTarball, cliTarball], installRoot);
+
+  return {
+    installRoot,
+    binPath: join(installRoot, "node_modules", ".bin", "attractor"),
+    cleanup: () => rmSync(tempRoot, { recursive: true, force: true }),
+  };
+}
+
+async function runCommandWithOutput(
+  command: string,
   args: string[],
   cwd: string,
   successMarker: (output: PackagedRunResult) => boolean,
-  timeoutMs = 180_000,
+  timeoutMs: number,
 ): Promise<PackagedRunResult> {
-  const child = spawn(process.execPath, [distEntry, ...args], {
+  const child = spawn(command, args, {
     cwd,
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -97,7 +151,7 @@ export async function runPackagedCli(
 
   await new Promise<void>((resolveRun, rejectRun) => {
     const timeout = setTimeout(() => {
-      rejectRun(new Error("Packaged CLI test timed out"));
+      rejectRun(new Error(`Command timed out: ${command}`));
     }, timeoutMs);
 
     const finishIfComplete = () => {
@@ -129,7 +183,7 @@ export async function runPackagedCli(
       clearTimeout(timeout);
       rejectRun(
         new Error(
-          `Packaged CLI exited before success (code=${code}, signal=${signal})\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
+          `Command exited before success (code=${code}, signal=${signal})\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
         ),
       );
     });
@@ -138,4 +192,24 @@ export async function runPackagedCli(
   });
 
   return { stdout, stderr };
+}
+
+export async function runPackagedCli(
+  distEntry: string,
+  args: string[],
+  cwd: string,
+  successMarker: (output: PackagedRunResult) => boolean,
+  timeoutMs = 180_000,
+): Promise<PackagedRunResult> {
+  return runCommandWithOutput(process.execPath, [distEntry, ...args], cwd, successMarker, timeoutMs);
+}
+
+export async function runInstalledPackagedCli(
+  binPath: string,
+  args: string[],
+  cwd: string,
+  successMarker: (output: PackagedRunResult) => boolean,
+  timeoutMs = 180_000,
+): Promise<PackagedRunResult> {
+  return runCommandWithOutput(binPath, args, cwd, successMarker, timeoutMs);
 }

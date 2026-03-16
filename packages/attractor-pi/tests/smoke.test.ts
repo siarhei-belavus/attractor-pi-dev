@@ -5,14 +5,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   hasProviderAuth,
+  installPackedCliFromWorkspace,
   readJson,
   resolveSmokeProvider,
-  runPackagedCli,
+  runInstalledPackagedCli,
 } from "./helpers/packaged-cli.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workspaceRoot = resolve(packageRoot, "..", "..");
-const distEntry = join(packageRoot, "dist", "attractor.mjs");
 const fixturePath = join(packageRoot, "tests", "fixtures", "debug-system-prompt-demo.dot");
 
 const smokeProvider = resolveSmokeProvider();
@@ -46,6 +46,7 @@ interface ActiveToolsRecord {
 
 describe.skipIf(!hasSmokeAuth)("Packaged CLI smoke test", () => {
   let logsDir: string;
+  let installRoot: string;
   let stdout = "";
   let stderr = "";
   let checkpoint: CheckpointRecord;
@@ -54,13 +55,17 @@ describe.skipIf(!hasSmokeAuth)("Packaged CLI smoke test", () => {
   let activeTools: ActiveToolsRecord;
   let responseText = "";
   let statusText = "";
+  let cleanupInstall: (() => void) | null = null;
 
   beforeAll(async () => {
+    const installedCli = installPackedCliFromWorkspace(workspaceRoot);
+    installRoot = installedCli.installRoot;
+    cleanupInstall = installedCli.cleanup;
     logsDir = mkdtempSync(join(tmpdir(), "attractor-pi-smoke-"));
-    const result = await runPackagedCli(
-      distEntry,
+    const result = await runInstalledPackagedCli(
+      installedCli.binPath,
       ["run", fixturePath, "--auto-approve", "--debug-agent", "--logs-dir", logsDir],
-      workspaceRoot,
+      installRoot,
       ({ stdout: currentStdout }) =>
         existsSync(join(logsDir, "checkpoint.json")) &&
         currentStdout.includes("Result: success"),
@@ -83,9 +88,11 @@ describe.skipIf(!hasSmokeAuth)("Packaged CLI smoke test", () => {
     if (logsDir) {
       rmSync(logsDir, { recursive: true, force: true });
     }
+    cleanupInstall?.();
   });
 
   it("runs the packaged attractor CLI end to end", () => {
+    expect(existsSync(join(installRoot, "node_modules", ".bin", "attractor"))).toBe(true);
     expect(stdout).toContain("Result: success");
     expect(stdout).toContain("Completed: start -> ask -> exit");
     expect(stderr).not.toContain("Failure:");

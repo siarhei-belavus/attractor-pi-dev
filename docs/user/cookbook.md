@@ -547,7 +547,7 @@ Opt in to home-directory pi extension discovery:
 
 ```bash
 export ATTRACTOR_PI_RESOURCE_DISCOVERY=auto
-node packages/attractor-pi/dist/attractor.mjs run tmp/debug-system-prompt-demo.dot
+node packages/attractor-cli/dist/bin.js run tmp/debug-system-prompt-demo.dot
 ```
 
 attractor run workflow.dot

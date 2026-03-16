@@ -138,6 +138,51 @@ describe("Prompt Resolution: @file includes", () => {
 
     expect(graph.getNode("collect").attrs["human.prompt_file"]).toBe(promptPath);
   });
+
+  it("expands variables before normalizing human.prompt_file", () => {
+    const runDir = path.join(tmpDir, "run-root");
+    const promptPath = path.join(
+      runDir,
+      "scenarios",
+      "baseline",
+      "clarifications",
+      "attractor-human-prompt.json",
+    );
+    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+    fs.writeFileSync(
+      promptPath,
+      JSON.stringify({
+        title: "Clarifications",
+        stage: "collect",
+        questions: [{ key: "approved", text: "Approve?", type: "yes_no" }],
+      }),
+    );
+
+    const dotPath = path.join(tmpDir, "pipeline.dot");
+    fs.writeFileSync(
+      dotPath,
+      `
+        digraph Test {
+          graph [goal="Test human prompt resolution", vars="run_dir"]
+          start [shape=Mdiamond]
+          exit  [shape=Msquare]
+          collect [
+            type="human.interview",
+            human.prompt_file="$run_dir/scenarios/baseline/clarifications/attractor-human-prompt.json"
+          ]
+          start -> collect -> exit
+        }
+      `,
+    );
+
+    const source = fs.readFileSync(dotPath, "utf-8");
+    const { graph } = preparePipeline(source, {
+      dotFilePath: dotPath,
+      variables: { run_dir: runDir },
+    });
+
+    expect(graph.getNode("collect").attrs["human.prompt_file"]).toBe(promptPath);
+  });
 });
 
 describe("Prompt Resolution: /command lookups", () => {

@@ -23,10 +23,24 @@ import {
   type SessionEvent,
 } from "../src/index.js";
 
+function hasAnthropicAuth(): boolean {
+  if (process.env["ANTHROPIC_API_KEY"]) {
+    return true;
+  }
+  const authPath = join(homedir(), ".pi", "agent", "auth.json");
+  if (!existsSync(authPath)) {
+    return false;
+  }
+  try {
+    const auth = JSON.parse(readFileSync(authPath, "utf-8")) as Record<string, unknown>;
+    return "anthropic" in auth;
+  } catch {
+    return false;
+  }
+}
+
 // Skip the entire suite if no Anthropic credentials are available
-const hasAuth =
-  !!process.env["ANTHROPIC_API_KEY"] ||
-  existsSync(join(homedir(), ".pi", "agent", "auth.json"));
+const hasAuth = hasAnthropicAuth();
 
 describe.skipIf(!hasAuth)("Integration Smoke Test (spec §9.13)", () => {
   let tmpDir: string;

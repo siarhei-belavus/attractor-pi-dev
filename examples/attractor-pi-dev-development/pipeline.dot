@@ -1,0 +1,58 @@
+digraph AttractorPiDevDevelopment {
+    graph [
+        goal="Implement $task in attractor-pi-dev",
+        label="attractor-pi-dev development loop",
+        vars="task, package_scope=auto, validation_command=pnpm test"
+    ]
+    rankdir=TB
+
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    planning [
+        label="Planning",
+        prompt="@prompts/planning.md",
+        fidelity="full",
+        thread_id="feature",
+        reasoning_effort="high"
+    ]
+
+    implementation [
+        label="Implementation",
+        prompt="@prompts/implementation.md",
+        fidelity="full",
+        thread_id="feature",
+        reasoning_effort="high"
+    ]
+
+    validate [
+        shape=parallelogram,
+        label="Validate",
+        tool_command="$validation_command"
+    ]
+
+    validation_gate [shape=diamond, label="Validation passed?"]
+
+    review [
+        label="Review",
+        prompt="@prompts/review.md",
+        fidelity="full",
+        thread_id="review",
+        reasoning_effort="high"
+    ]
+
+    review_gate [
+        shape=hexagon,
+        label="Review Decision",
+        human.default_choice="F"
+    ]
+
+    start -> planning -> implementation -> validate -> validation_gate
+    validation_gate -> review         [condition="outcome=success"]
+    validation_gate -> implementation [condition="outcome!=success", label="Fix validation failures"]
+
+    review -> review_gate
+    review_gate -> exit           [label="[A] Approve"]
+    review_gate -> implementation [label="[F] Request fixes", fidelity="full", thread_id="feature"]
+    review_gate -> planning       [label="[P] Re-plan architecture", fidelity="full", thread_id="feature"]
+}

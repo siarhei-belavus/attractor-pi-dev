@@ -23,7 +23,7 @@ Product page: [factory.strongdm.ai/products/attractor](https://factory.strongdm.
 ## Install
 
 ```bash
-npm install -g @jhugman/attractor-pi
+npm install -g @attractor/cli
 ```
 
 Requires Node.js 20+.
@@ -32,19 +32,19 @@ Requires Node.js 20+.
 
 ```bash
 # Check a pipeline for errors
-attractor-pi validate workflow.dot
+attractor validate workflow.dot
 
 # Run a pipeline
-attractor-pi run workflow.dot
+attractor run workflow.dot
 
 # Send a steering message to a running manager loop
-attractor-pi steer run-12 --message "Focus on the failing test first"
+attractor steer run-12 --message "Focus on the failing test first"
 
 # Run without LLM calls (simulation mode)
-attractor-pi run workflow.dot --simulate
+attractor run workflow.dot --simulate
 
 # Override variables declared in the DOT file
-attractor-pi run workflow.dot --set feature=login --set env=prod
+attractor run workflow.dot --set feature=login --set env=prod
 ```
 
 ## What it does
@@ -99,7 +99,7 @@ digraph RalphWiggum {
 }
 ```
 
-Run it: `attractor-pi run pipeline.dot --set epic_id=E-42`
+Run it: `attractor run pipeline.dot --set epic_id=E-42`
 
 More examples in [`examples/`](examples/).
 
@@ -165,7 +165,7 @@ Attractor is a TypeScript monorepo with three workspace packages:
 | `@attractor/backend-pi-dev` | LLM backend wrapping [pi-mono](https://github.com/ArtificiallyIntelligent/pi-mono) |
 | `@attractor/cli` | CLI entry point |
 
-The published `@jhugman/attractor-pi` package bundles all three into a single file, keeping only the pi-mono packages as external npm dependencies.
+The published `@attractor/cli` package is the single executable CLI. It composes the generic CLI engine with the Pi backend while keeping `@attractor/core` and `@attractor/backend-pi-dev` as separate libraries.
 
 The core engine is backend-agnostic. The `CodergenBackend` interface (a single `run(prompt, options)` method) is the only contract between the engine and whatever calls the LLM. The `backend-pi-dev` package provides one implementation; you could write another.
 

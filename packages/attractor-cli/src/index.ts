@@ -518,10 +518,3 @@ function printEvent(event: PipelineEvent, verbose: boolean) {
       if (verbose) console.log(`[${ts}] ${event.type}`);
   }
 }
-
-if (shouldRunAsCliEntry()) {
-  main().catch((error) => {
-    console.error(String(error));
-    process.exit(1);
-  });
-}

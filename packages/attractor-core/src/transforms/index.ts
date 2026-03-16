@@ -154,15 +154,6 @@ export class PromptResolutionTransform implements Transform {
     };
 
     for (const node of graph.nodes.values()) {
-      const promptFileAttr = node.attrs[HUMAN_INTERVIEW_PROMPT_FILE_ATTR];
-      if (
-        typeof promptFileAttr === "string" &&
-        promptFileAttr.trim().length > 0 &&
-        !path.isAbsolute(promptFileAttr)
-      ) {
-        node.attrs[HUMAN_INTERVIEW_PROMPT_FILE_ATTR] = path.resolve(dotFileDir, promptFileAttr);
-      }
-
       // Resolve @file / /command in tool attributes
       for (const attrKey of ["tool_command", "pre_hook", "post_hook"] as const) {
         const val = node.attrs[attrKey];
@@ -188,6 +179,39 @@ export class PromptResolutionTransform implements Transform {
     }
     if (unresolvedCommands.length > 0) {
       graph.attrs._unresolvedPromptCommands = unresolvedCommands;
+    }
+
+    return graph;
+  }
+}
+
+/**
+ * Human prompt path transform: normalizes human.prompt_file after variable expansion.
+ *
+ * This must run after VariableExpansionTransform so values such as
+ * "$run_dir/scenarios/.../attractor-human-prompt.json" become absolute
+ * runtime paths instead of being resolved against the DOT directory first.
+ */
+export class HumanPromptPathTransform implements Transform {
+  private dotFilePath?: string;
+
+  constructor(dotFilePath?: string) {
+    this.dotFilePath = dotFilePath;
+  }
+
+  apply(graph: Graph): Graph {
+    if (!this.dotFilePath) return graph;
+
+    const dotFileDir = path.dirname(path.resolve(this.dotFilePath));
+    for (const node of graph.nodes.values()) {
+      const promptFileAttr = node.attrs[HUMAN_INTERVIEW_PROMPT_FILE_ATTR];
+      if (
+        typeof promptFileAttr === "string" &&
+        promptFileAttr.trim().length > 0 &&
+        !path.isAbsolute(promptFileAttr)
+      ) {
+        node.attrs[HUMAN_INTERVIEW_PROMPT_FILE_ATTR] = path.resolve(dotFileDir, promptFileAttr);
+      }
     }
 
     return graph;
@@ -290,6 +314,7 @@ export function defaultTransforms(
   return [
     new PromptResolutionTransform(dotFilePath),
     new VariableExpansionTransform(variables),
+    new HumanPromptPathTransform(dotFilePath),
     new StylesheetApplicationTransform(),
   ];
 }

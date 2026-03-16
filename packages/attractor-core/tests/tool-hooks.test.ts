@@ -201,4 +201,19 @@ describe("ToolHandler: pre_hook and post_hook (spec §9.7)", () => {
     expect(result.status).toBe(StageStatus.FAIL);
     expect(result.failureReason).toBe("No tool_command specified");
   });
+
+  it("injects the active logs root into the tool environment", async () => {
+    const handler = new ToolHandler();
+    const logsRoot = "/tmp/attractor-logs-root";
+    const node = makeToolNode({
+      attrs: {
+        tool_command: "printf '%s' \"$ATTRACTOR_LOGS_DIR\"",
+      },
+    });
+    const ctx = new Context();
+    const result = await handler.execute(node, ctx, stubGraph, logsRoot);
+
+    expect(result.status).toBe(StageStatus.SUCCESS);
+    expect(result.contextUpdates?.["tool.output"]).toBe(logsRoot);
+  });
 });

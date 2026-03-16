@@ -25,6 +25,7 @@ Use this file when you need exact attribute names or want to know which context 
 | `shape` | String | Implied handler type unless `type` overrides it. |
 | `type` | String | Explicit handler type. |
 | `prompt` | String | Inline text, `@file`, or `/command`. |
+| `context_keys` | String | Comma-separated context selectors to append into the prompt in authored order. |
 | `max_retries` | Integer | Extra attempts after the first run. |
 | `goal_gate` | Boolean | Must succeed before the pipeline may exit. |
 | `retry_target` | String | Retry jump target for this node. |
@@ -66,6 +67,27 @@ Command lookup searches:
 2. `{project}/.attractor/commands/`
 3. `~/.attractor/commands/`
 4. `ATTRACTOR_COMMANDS_PATH`
+
+## Prompt Context Injection
+
+Use `context_keys` on LLM-capable nodes when a stage needs explicit workflow handoff from earlier stages.
+
+Example:
+
+```dot
+review [
+    prompt="@prompts/review.md",
+    context_keys="node.context_scan.last_response,node.validate.tool.output"
+]
+```
+
+Rules:
+- Prefer node-scoped selectors in the form `node.<node_id>.<context_key>`.
+- Order is preserved exactly as authored.
+- Missing selectors render as `<missing>`.
+- Empty string values render as `<empty>`.
+- Objects and arrays render as pretty JSON blocks in the final prompt.
+- Flat selectors still work, but they follow latest-value semantics and may be overwritten by later stages.
 
 ## Variables
 
@@ -113,6 +135,8 @@ Examples:
 
 The built-in engine and handlers produce a fixed set of routable keys. Do not assume arbitrary DOT attributes or model responses become context automatically.
 
+For stable prompt handoff, use node-scoped selectors instead of these flat latest-value keys whenever the producer matters.
+
 Available after every node:
 - `outcome`
 - `preferred_label`
@@ -128,6 +152,15 @@ Available after human gates:
 
 Available after tool nodes:
 - `tool.output`
+
+Available as node-scoped mirrors after stage completion:
+- `node.<node_id>.outcome`
+- `node.<node_id>.preferred_label`
+- `node.<node_id>.failure.reason`
+- `node.<node_id>.last_response`
+- `node.<node_id>.tool.output`
+- `node.<node_id>.parallel.results`
+- any other non-`internal.*` key written via `contextUpdates`
 
 Available after governance nodes:
 - `judge.rubric.score`
@@ -205,3 +238,7 @@ Current debug artifact layout:
 - thread/session history goes under `<logsRoot>/debug/threads/<sessionKey>/`
 
 Do not teach or rely on legacy paths like a run-root `system-prompt.md` or `agent-thread.jsonl`.
+
+For nodes with `context_keys`, also inspect:
+- `<logsRoot>/<nodeId>/prompt.md` for the final rendered prompt
+- `<logsRoot>/<nodeId>/context-inputs.json` for requested selectors, resolved values, headings, and missing selectors

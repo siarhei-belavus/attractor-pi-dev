@@ -803,7 +803,7 @@ export class ToolHandler implements Handler {
     node: GraphNode,
     _context: Context,
     _graph: Graph,
-    _logsRoot: string,
+    logsRoot: string,
   ): Promise<Outcome> {
     const command = node.attrs["tool_command"] as string | undefined;
     if (!command) {
@@ -820,6 +820,10 @@ export class ToolHandler implements Handler {
         timeout,
         encoding: "utf-8" as const,
         stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          ATTRACTOR_LOGS_DIR: logsRoot,
+        },
       };
 
       const notes: string[] = [];

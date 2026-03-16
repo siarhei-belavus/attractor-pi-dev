@@ -42,7 +42,7 @@ const goldenRoot = path.join(cliPackageRoot, "tests", "golden");
 const workflowsDir = path.join(goldenRoot, "workflows");
 const seedDir = path.join(goldenRoot, "seed");
 const expectedDir = path.join(goldenRoot, "expected");
-const cliEntryPoint = path.join(cliPackageRoot, "dist", "index.js");
+const cliEntryPoint = path.join(cliPackageRoot, "dist", "bin.js");
 
 let buildPromise: Promise<void> | null = null;
 
