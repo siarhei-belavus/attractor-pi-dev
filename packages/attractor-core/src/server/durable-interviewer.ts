@@ -17,19 +17,32 @@ export class DurableInterviewer implements Interviewer {
     const resumeQuestionId = this.getResumeQuestionId(prompt);
     if (resumeQuestionId) {
       const record = this.questionStore.get(resumeQuestionId);
-      if (record && record.runId === this.runId) {
-        if (record.status === "answered" && record.answers) {
-          return { state: "answered", answers: record.answers, promptId: record.id };
-        }
-        if (record.status === "pending") {
-          this.hooks.onWaiting(record);
-          return { state: "waiting", promptId: record.id };
-        }
-        if (record.status === "timeout") {
-          return { state: "timeout", promptId: record.id };
-        }
-        return { state: "skipped", promptId: record.id };
+      if (!record) {
+        throw new Error(
+          `Resume prompt '${resumeQuestionId}' for stage '${prompt.stage}' was not found`,
+        );
       }
+      if (record.runId !== this.runId) {
+        throw new Error(
+          `Resume prompt '${resumeQuestionId}' for stage '${prompt.stage}' belongs to run '${record.runId}', expected '${this.runId}'`,
+        );
+      }
+      if (record.status === "answered") {
+        if (!record.answers) {
+          throw new Error(
+            `Resume prompt '${resumeQuestionId}' for stage '${prompt.stage}' is answered but has no stored answers`,
+          );
+        }
+        return { state: "answered", answers: record.answers, promptId: record.id };
+      }
+      if (record.status === "pending") {
+        this.hooks.onWaiting(record);
+        return { state: "waiting", promptId: record.id };
+      }
+      if (record.status === "timeout") {
+        return { state: "timeout", promptId: record.id };
+      }
+      return { state: "skipped", promptId: record.id };
     }
 
     const pending = this.questionStore.getOrCreatePending(this.runId, prompt);

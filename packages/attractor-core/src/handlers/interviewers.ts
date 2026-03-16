@@ -146,9 +146,8 @@ export class ConsoleInterviewer implements Interviewer {
 
         if (question.type === QuestionType.CONFIRMATION) {
           const response = await rl.question("[Confirm/cancel]: ");
-          const confirmed = response.trim().toLowerCase().startsWith("c");
           answers[question.key] = {
-            value: confirmed ? AnswerValue.CONFIRMED : AnswerValue.CANCELLED,
+            value: parseConfirmationAnswer(response),
           };
           continue;
         }
@@ -177,4 +176,26 @@ function isAnswerMap(value: unknown): value is HumanPromptAnswerMap {
     return false;
   }
   return !("value" in (value as Record<string, unknown>));
+}
+
+export function parseConfirmationAnswer(input: string): AnswerValue.CONFIRMED | AnswerValue.CANCELLED {
+  const normalized = input.trim().toLowerCase();
+  if (
+    normalized === "confirm" ||
+    normalized === "confirmed" ||
+    normalized === "y" ||
+    normalized === "yes"
+  ) {
+    return AnswerValue.CONFIRMED;
+  }
+  if (
+    normalized === "cancel" ||
+    normalized === "cancelled" ||
+    normalized === "c" ||
+    normalized === "n" ||
+    normalized === "no"
+  ) {
+    return AnswerValue.CANCELLED;
+  }
+  return AnswerValue.CANCELLED;
 }
