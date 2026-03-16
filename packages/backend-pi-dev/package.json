@@ -19,7 +19,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@attractor/core": "workspace:*",
+    "@attractor/core": "0.1.0",
     "@mariozechner/pi-agent-core": "^0.52.9",
     "@mariozechner/pi-ai": "^0.52.9",
     "@mariozechner/pi-coding-agent": "^0.52.9",
