@@ -39,7 +39,7 @@
       "managerLoops": {},
       "questions": {
         "q-0001.json": {
-          "answerValue": "",
+          "answers": {},
           "options": [
             {
               "key": "A",
@@ -50,10 +50,16 @@
               "label": "[R] Rework"
             }
           ],
+          "questionCount": 1,
+          "questionKeys": [
+            "selection"
+          ],
+          "questionTypes": [
+            "multiple_choice"
+          ],
           "stage": "review",
           "status": "pending",
-          "text": "Review release",
-          "type": "multiple_choice"
+          "title": "Review release"
         }
       }
     }

@@ -361,7 +361,7 @@ export class PipelineRunner {
             }
           } else {
             const lastHandlerType = graph.resolveHandlerType(lastNode);
-            if (lastHandlerType === "wait.human") {
+            if (lastHandlerType === "wait.human" || lastHandlerType === "human.interview") {
               currentNode = lastNode;
               context.delete("failure.reason");
               const idx = completedNodes.lastIndexOf(lastCompletedId);

@@ -44,6 +44,15 @@ validate [label="Validate", prompt="Run tests", goal_gate=true]
 // Human gate
 approval [shape=hexagon, label="Approve?"]
 
+// Human interview (writes answers into context, does not route by edge)
+collect [
+    type="human.interview",
+    human.questions="[
+      {\\"key\\":\\"approved\\",\\"text\\":\\"Approve?\\",\\"type\\":\\"yes_no\\"},
+      {\\"key\\":\\"notes\\",\\"text\\":\\"Notes\\",\\"type\\":\\"freeform\\",\\"required\\":false}
+    ]"
+]
+
 // Conditional routing point
 check [shape=diamond, label="Tests pass?"]
 
@@ -87,6 +96,15 @@ gate -> reject  [label="[R] Reject"]
 ```
 
 Recognized patterns: `[K] Label`, `K) Label`, `K - Label`.
+
+## Human Interview Answers
+
+`human.interview` writes:
+
+- `human.interview.answers`
+- `human.interview.<question_key>`
+- `human.interview.<question_key>.label` for `multiple_choice`
+- `node.<node_id>.human.interview.*` mirrors for provenance-safe reads
 
 ## Condition Expressions
 

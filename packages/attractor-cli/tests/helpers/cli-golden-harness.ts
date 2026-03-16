@@ -433,16 +433,35 @@ function summarizeManagerLoop(rawArtifact: Record<string, unknown>): Record<stri
 }
 
 function summarizeQuestion(rawQuestion: Record<string, unknown>): Record<string, unknown> {
-  const question =
-    rawQuestion.question && typeof rawQuestion.question === "object"
-      ? (rawQuestion.question as Record<string, unknown>)
+  const prompt =
+    rawQuestion.prompt && typeof rawQuestion.prompt === "object"
+      ? (rawQuestion.prompt as Record<string, unknown>)
       : {};
-  const options = Array.isArray(question.options) ? question.options : [];
+  const questions = Array.isArray(prompt.questions) ? prompt.questions : [];
+  const options = questions.flatMap((question) => {
+    if (!question || typeof question !== "object") {
+      return [];
+    }
+    const rawOptions = (question as Record<string, unknown>).options;
+    return Array.isArray(rawOptions) ? rawOptions : [];
+  });
   return sortValue({
-    answerValue:
-      rawQuestion.answer && typeof rawQuestion.answer === "object"
-        ? String((rawQuestion.answer as Record<string, unknown>).value ?? "")
+    answers:
+      rawQuestion.answers && typeof rawQuestion.answers === "object"
+        ? rawQuestion.answers
+        : {},
+    questionKeys: questions.map((question) =>
+      question && typeof question === "object"
+        ? String((question as Record<string, unknown>).key ?? "")
         : "",
+    ),
+    questionTypes: questions.map((question) =>
+      question && typeof question === "object"
+        ? String((question as Record<string, unknown>).type ?? "")
+        : "",
+    ),
+    title: String(prompt.title ?? ""),
+    questionCount: questions.length,
     options: options.map((option) =>
       option && typeof option === "object"
         ? {
@@ -453,8 +472,6 @@ function summarizeQuestion(rawQuestion: Record<string, unknown>): Record<string,
     ),
     stage: String(rawQuestion.stage ?? ""),
     status: String(rawQuestion.status ?? ""),
-    text: String(question.text ?? ""),
-    type: String(question.type ?? ""),
   }) as Record<string, unknown>;
 }
 
@@ -502,6 +519,7 @@ function isStableContextKey(key: string): boolean {
     key === "outcome" ||
     key === "last_stage" ||
     key.startsWith("human.gate.") ||
+    key.startsWith("human.interview.") ||
     key.startsWith("parallel.fan_in.") ||
     key.startsWith("stack.manager_loop.")
   );

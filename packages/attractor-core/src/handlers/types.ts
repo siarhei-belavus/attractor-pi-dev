@@ -32,22 +32,14 @@ export interface QuestionOption {
   label: string;
 }
 
-export interface Question {
-  text: string;
-  type: QuestionType;
-  options: QuestionOption[];
-  default?: Answer;
-  timeoutSeconds?: number;
-  stage: string;
-  metadata?: Record<string, unknown>;
-}
-
 export enum AnswerValue {
   YES = "yes",
   NO = "no",
   SKIPPED = "skipped",
   TIMEOUT = "timeout",
   WAITING = "waiting",
+  CONFIRMED = "confirmed",
+  CANCELLED = "cancelled",
 }
 
 export interface Answer {
@@ -57,10 +49,33 @@ export interface Answer {
   questionId?: string;
 }
 
+export interface HumanPromptQuestion {
+  key: string;
+  text: string;
+  type: QuestionType;
+  options?: QuestionOption[];
+  default?: string | AnswerValue;
+  required?: boolean;
+}
+
+export interface HumanPrompt {
+  title: string;
+  stage: string;
+  questions: HumanPromptQuestion[];
+  metadata?: Record<string, unknown>;
+}
+
+export type HumanPromptAnswerMap = Record<string, Answer>;
+
+export interface HumanPromptState {
+  state: "answered" | "waiting" | "timeout" | "skipped";
+  answers?: HumanPromptAnswerMap;
+  promptId?: string;
+}
+
 /** Interface for all human interaction */
 export interface Interviewer {
-  ask(question: Question): Promise<Answer>;
-  askMultiple?(questions: Question[]): Promise<Answer[]>;
+  ask(prompt: HumanPrompt): Promise<HumanPromptState>;
   inform?(message: string, stage: string): Promise<void>;
 }
 

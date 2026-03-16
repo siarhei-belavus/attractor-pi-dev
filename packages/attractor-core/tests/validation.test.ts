@@ -128,6 +128,46 @@ describe("Validation", () => {
     expect(typeWarns.length).toBe(0);
   });
 
+  it("accepts valid human.interview questions", () => {
+    const diags = buildAndValidate(`
+      digraph G {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        collect [
+          type="human.interview",
+          human.questions="[
+            {\\"key\\":\\"approved\\",\\"text\\":\\"Approve deployment?\\",\\"type\\":\\"yes_no\\"},
+            {\\"key\\":\\"window\\",\\"text\\":\\"Deployment window\\",\\"type\\":\\"freeform\\",\\"required\\":false},
+            {\\"key\\":\\"strategy\\",\\"text\\":\\"Strategy\\",\\"type\\":\\"multiple_choice\\",\\"options\\":[{\\"key\\":\\"rolling\\",\\"label\\":\\"Rolling\\"}]}
+          ]"
+        ]
+        start -> collect -> exit
+      }
+    `);
+    const errors = diags.filter((d) => d.severity === Severity.ERROR);
+    expect(errors).toHaveLength(0);
+  });
+
+  it("errors on malformed human.interview questions", () => {
+    const diags = buildAndValidate(`
+      digraph G {
+        start [shape=Mdiamond]
+        exit  [shape=Msquare]
+        collect [
+          type="human.interview",
+          human.questions="[
+            {\\"key\\":\\"strategy\\",\\"text\\":\\"Strategy\\",\\"type\\":\\"multiple_choice\\"},
+            {\\"key\\":\\"strategy\\",\\"text\\":\\"Duplicate\\",\\"type\\":\\"freeform\\"}
+          ]"
+        ]
+        start -> collect -> exit
+      }
+    `);
+    const errors = diags.filter((d) => d.rule === "human_interview_questions");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.severity).toBe(Severity.ERROR);
+  });
+
   it("warns on missing prompt on LLM nodes", () => {
     const diags = buildAndValidate(`
       digraph G {

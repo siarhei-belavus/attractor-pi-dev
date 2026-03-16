@@ -19,6 +19,8 @@ import {
 import type {
   Handler,
   CodergenBackend,
+  HumanPrompt,
+  HumanPromptQuestion,
   Interviewer,
   QuestionOption,
   ManagerObserver,
@@ -26,6 +28,10 @@ import type {
   ManagerChildRuntimeFactory,
 } from "./types.js";
 import { QuestionType, AnswerValue } from "./types.js";
+import {
+  HUMAN_INTERVIEW_PARSED_ATTR,
+  validateHumanPromptAnswers,
+} from "./human-prompt.js";
 import { evaluateCondition } from "../conditions/index.js";
 import { parseDuration } from "../model/types.js";
 import { sleep } from "../engine/retry.js";
@@ -171,25 +177,34 @@ export class WaitForHumanHandler implements Handler {
       label: c.label,
     }));
 
-    const answer = await this.interviewer.ask({
-      text: node.label || "Select an option:",
-      type: QuestionType.MULTIPLE_CHOICE,
-      options,
+    const prompt: HumanPrompt = {
+      title: node.label || "Select an option:",
       stage: node.id,
+      questions: [
+        {
+          key: "selection",
+          text: node.label || "Select an option:",
+          type: QuestionType.MULTIPLE_CHOICE,
+          options,
+          required: true,
+        },
+      ],
       metadata: {
+        handlerType: "wait.human",
         resumeQuestionId: context.getString("internal.waiting_for_question_id"),
       },
-    });
+    };
+    const response = await this.interviewer.ask(prompt);
 
-    if (answer.value === AnswerValue.WAITING) {
+    if (response.state === "waiting") {
       return {
         status: StageStatus.WAITING,
         notes: "waiting for human answer",
         contextUpdates: {
-          ...(answer.questionId
+          ...(response.promptId
             ? {
-              "internal.waiting_for_question_id": answer.questionId,
-              "human.gate.question_id": answer.questionId,
+              "internal.waiting_for_question_id": response.promptId,
+              "human.gate.question_id": response.promptId,
             }
             : {}),
         },
@@ -197,7 +212,7 @@ export class WaitForHumanHandler implements Handler {
     }
 
     // Handle timeout
-    if (answer.value === AnswerValue.TIMEOUT) {
+    if (response.state === "timeout") {
       const defaultChoice = node.attrs["human.default_choice"] as string | undefined;
       if (defaultChoice) {
         const found = choices.find((c) => c.key === defaultChoice || c.to === defaultChoice);
@@ -221,8 +236,18 @@ export class WaitForHumanHandler implements Handler {
       };
     }
 
-    if (answer.value === AnswerValue.SKIPPED) {
+    if (response.state === "skipped") {
       return failOutcome("human skipped interaction", {
+        contextUpdates: {
+          "internal.waiting_for_question_id": "",
+        },
+      });
+    }
+
+    const validated = validateHumanPromptAnswers(prompt, response.answers ?? {});
+    const answer = validated.normalizedByKey.selection;
+    if (!answer) {
+      return failOutcome("human gate response is missing selection", {
         contextUpdates: {
           "internal.waiting_for_question_id": "",
         },
@@ -233,8 +258,8 @@ export class WaitForHumanHandler implements Handler {
     const selected =
       choices.find(
         (c) =>
-          c.key.toLowerCase() === String(answer.value).toLowerCase() ||
-          c.label.toLowerCase() === String(answer.value).toLowerCase(),
+          c.key.toLowerCase() === answer.value.toLowerCase() ||
+          c.label.toLowerCase() === answer.value.toLowerCase(),
       ) || choices[0]!;
 
     return successOutcome({
@@ -243,11 +268,87 @@ export class WaitForHumanHandler implements Handler {
         "human.gate.selected": selected.key,
         "human.gate.label": selected.label,
         "internal.waiting_for_question_id": "",
-        ...(answer.questionId
-          ? { "human.gate.question_id": answer.questionId }
+        ...(response.promptId
+          ? { "human.gate.question_id": response.promptId }
           : {}),
       },
     });
+  }
+}
+
+export class HumanInterviewHandler implements Handler {
+  constructor(private interviewer: Interviewer) {}
+
+  async execute(
+    node: GraphNode,
+    context: Context,
+    _graph: Graph,
+    _logsRoot: string,
+  ): Promise<Outcome> {
+    const parsedQuestions = node.attrs[HUMAN_INTERVIEW_PARSED_ATTR];
+    if (!Array.isArray(parsedQuestions) || parsedQuestions.length === 0) {
+      return failOutcome(
+        `Node '${node.id}' is missing validated ${HUMAN_INTERVIEW_PARSED_ATTR} questions`,
+      );
+    }
+
+    const prompt: HumanPrompt = {
+      title: node.label || node.id,
+      stage: node.id,
+      questions: parsedQuestions as HumanPromptQuestion[],
+      metadata: {
+        handlerType: "human.interview",
+        resumeQuestionId: context.getString("internal.waiting_for_question_id"),
+      },
+    };
+    const response = await this.interviewer.ask(prompt);
+
+    if (response.state === "waiting") {
+      return {
+        status: StageStatus.WAITING,
+        notes: "waiting for human answers",
+        contextUpdates: {
+          ...(response.promptId
+            ? {
+              "internal.waiting_for_question_id": response.promptId,
+              "human.interview.question_id": response.promptId,
+            }
+            : {}),
+        },
+      };
+    }
+
+    if (response.state === "timeout") {
+      return failOutcome(`human interview '${node.id}' timed out`, {
+        contextUpdates: {
+          "internal.waiting_for_question_id": "",
+        },
+      });
+    }
+
+    if (response.state === "skipped") {
+      return failOutcome(`human interview '${node.id}' was cancelled`, {
+        contextUpdates: {
+          "internal.waiting_for_question_id": "",
+        },
+      });
+    }
+
+    const validated = validateHumanPromptAnswers(prompt, response.answers ?? {});
+    const contextUpdates: Record<string, unknown> = {
+      "human.interview.answers": validated.scalarValues,
+      "internal.waiting_for_question_id": "",
+      ...(response.promptId ? { "human.interview.question_id": response.promptId } : {}),
+    };
+
+    for (const [key, value] of Object.entries(validated.scalarValues)) {
+      contextUpdates[`human.interview.${key}`] = value;
+    }
+    for (const [key, label] of Object.entries(validated.labels)) {
+      contextUpdates[`human.interview.${key}.label`] = label;
+    }
+
+    return successOutcome({ contextUpdates });
   }
 }
 

@@ -1,11 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-  AnswerValue,
   type AttachedExecutionSupervisor,
   type CapableBackend,
+  type HumanPrompt,
+  type HumanPromptState,
   type Interviewer,
-  type Question,
   type ObserveResult,
 } from "@attractor/core";
 
@@ -26,8 +26,8 @@ interface StoredQuestionRecord {
   nodeId: string;
   stage: string;
   status: "pending";
-  question: Question;
-  answer: null;
+  prompt: HumanPrompt;
+  answers: null;
   createdAt: string;
   answeredAt: null;
   metadata: Record<string, unknown>;
@@ -106,7 +106,7 @@ class WaitingInterviewer implements Interviewer {
     this.questionsDir = path.join(logsRoot, "questions");
   }
 
-  async ask(question: Question) {
+  async ask(prompt: HumanPrompt): Promise<HumanPromptState> {
     fs.mkdirSync(this.questionsDir, { recursive: true });
     const filePath = path.join(this.questionsDir, `${this.questionId}.json`);
 
@@ -114,21 +114,18 @@ class WaitingInterviewer implements Interviewer {
       const record: StoredQuestionRecord = {
         id: this.questionId,
         runId: this.runId,
-        nodeId: question.stage,
-        stage: question.stage,
+        nodeId: prompt.stage,
+        stage: prompt.stage,
         status: "pending",
-        question,
-        answer: null,
+        prompt,
+        answers: null,
         createdAt: new Date(0).toISOString(),
         answeredAt: null,
-        metadata: question.metadata ?? {},
+        metadata: prompt.metadata ?? {},
       };
       fs.writeFileSync(filePath, JSON.stringify(record, null, 2));
     }
 
-    return {
-      value: AnswerValue.WAITING,
-      questionId: this.questionId,
-    };
+    return { state: "waiting", promptId: this.questionId };
   }
 }

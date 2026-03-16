@@ -11,7 +11,7 @@
       "---",
       "---",
       "Result: success",
-      "Completed: start -> parallel_node -> branch_a -> fan_in -> exit",
+      "Completed: start -> parallel_node -> fan_in -> exit",
       "Logs: <TMP_ROOT>/logs"
     ],
     "stderr": []
@@ -25,21 +25,16 @@
     "completedNodes": [
       "start",
       "parallel_node",
-      "branch_a",
       "fan_in",
       "exit"
     ],
     "waitingForQuestionId": "",
     "keyContext": {
-      "last_stage": "branch_a",
       "outcome": "success",
       "parallel.fan_in.best_outcome": "success"
     },
     "artifacts": {
       "nodeStatus": {
-        "branch_a": {
-          "status": "success"
-        },
         "fan_in": {
           "status": "success"
         },

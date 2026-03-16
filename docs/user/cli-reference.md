@@ -21,7 +21,7 @@ attractor run <file.dot> [options]
 | Flag                  | Description |
 |-----------------------|-------------|
 | `--simulate`          | Run in simulation mode (no LLM calls). Stages return canned responses. |
-| `--auto-approve`      | Auto-approve all human gates (selects the first option). |
+| `--auto-approve`      | Auto-approve `wait.human` gates only (selects the first option). Fails on `human.interview`. |
 | `--logs-dir <path>`   | Output directory for logs and checkpoints. Default: `.attractor-runs/<timestamp>`. |
 | `--provider <name>`   | LLM provider. Default: packaged pi settings, else `anthropic`. |
 | `--model <id>`        | LLM model ID. Default: packaged pi settings, else `claude-sonnet-4-5-20250929`. |
@@ -74,7 +74,7 @@ Completed: plan -> implement -> validate -> review
 Logs: .attractor-runs/1707654601000
 ```
 
-When execution reaches a human gate, the CLI presents choices interactively:
+When execution reaches a `wait.human` gate, the CLI presents choices interactively:
 
 ```
 [10:30:45] Human gate: Review Changes
@@ -83,6 +83,8 @@ When execution reaches a human gate, the CLI presents choices interactively:
   [R] Reject
 Select:
 ```
+
+When execution reaches `human.interview`, the interactive CLI asks each authored question in order. In non-interactive runs, the CLI prints the durable prompt id and exits in `waiting` so an operator can answer it later with `attractor answer`.
 
 ### `attractor validate`
 
@@ -134,8 +136,29 @@ attractor serve [options]
 | `POST` | `/pipelines` | Start a pipeline. JSON body: `{ "dotSource": "..." }`. |
 | `GET`  | `/pipelines/{id}` | Get run status. |
 | `POST` | `/pipelines/{id}/steer` | Queue a manager-loop steering message. JSON body: `{ "message": "..." }`. |
-| `POST` | `/pipelines/{id}/questions/{qid}/answer` | Submit a human-in-the-loop answer. |
+| `POST` | `/pipelines/{id}/questions/{qid}/answer` | Submit a human prompt answer map. JSON body: `{ "answers": { "<key>": { "value": "..." } } }`. |
 | `GET`  | `/pipelines/{id}/events` | SSE event stream. |
+
+Pending human prompts are exposed in `GET /pipelines/{id}` as `pendingQuestion` with `id`, `status`, `title`, `stage`, `questions`, and `createdAt`.
+
+### `attractor answer`
+
+Store answers for a durable local prompt created by a non-interactive CLI run.
+
+```
+attractor answer --run <run-id> --prompt <prompt-id> --answers <json>
+```
+
+**Example:**
+
+```bash
+attractor answer \
+  --run 1707654601000 \
+  --prompt q-0001 \
+  --answers '{"approved":{"value":"yes"},"window":{"value":"after-hours","text":"after-hours"}}'
+```
+
+After storing answers, resume the pipeline with `attractor run <file.dot> --resume-from <run-dir>`.
 
 ### `attractor steer`
 

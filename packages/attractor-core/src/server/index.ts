@@ -7,8 +7,8 @@ import { PipelineRunner } from "../engine/runner.js";
 import type { RunConfig, RunResult } from "../engine/runner.js";
 import type { PipelineEvent, EventListener } from "../events/index.js";
 import type {
-  Answer,
   CodergenBackend,
+  HumanPromptAnswerMap,
   ManagerObserverFactory,
 } from "../handlers/types.js";
 import { StageStatus } from "../state/types.js";
@@ -436,10 +436,9 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       response.pendingQuestion = {
         id: pendingQuestion.id,
         status: pendingQuestion.status,
-        text: pendingQuestion.question.text,
-        type: pendingQuestion.question.type,
-        options: pendingQuestion.question.options,
+        title: pendingQuestion.prompt.title,
         stage: pendingQuestion.stage,
+        questions: pendingQuestion.prompt.questions,
         createdAt: pendingQuestion.createdAt,
       };
     }
@@ -505,7 +504,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       return;
     }
 
-    let parsed: { value?: string; text?: string };
+    let parsed: { answers?: HumanPromptAnswerMap };
     try {
       parsed = JSON.parse(body);
     } catch {
@@ -513,8 +512,8 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       return;
     }
 
-    if (parsed.value === undefined) {
-      sendError(res, 400, "Missing answer value");
+    if (!parsed.answers || typeof parsed.answers !== "object" || Array.isArray(parsed.answers)) {
+      sendError(res, 400, "Missing answers map");
       return;
     }
 
@@ -533,12 +532,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       return;
     }
 
-    const answer: Answer = {
-      value: parsed.value,
-      ...(parsed.text !== undefined ? { text: parsed.text } : {}),
-      questionId,
-    };
-    const submit = run.questionStore.submitAnswer(runId, questionId, answer);
+    const submit = run.questionStore.submitAnswers(runId, questionId, parsed.answers);
     if (!submit.ok) {
       if (submit.reason === "not_found") {
         sendError(res, 404, `Unknown questionId: ${questionId}`);
@@ -550,6 +544,10 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       }
       if (submit.reason === "run_mismatch") {
         sendError(res, 409, `Question ${questionId} does not belong to run ${runId}`);
+        return;
+      }
+      if (submit.reason === "invalid_answers") {
+        sendError(res, 400, submit.message ?? `Question ${questionId} answers are invalid`);
         return;
       }
       sendError(res, 409, `Question ${questionId} is not pending`);
@@ -926,3 +924,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
 export interface HttpPipelineServer extends http.Server {
   runs: Map<string, RunState>;
 }
+
+export { DurableInterviewer } from "./durable-interviewer.js";
+export { QuestionStore } from "./question-store.js";
+export type { QuestionRecord, SubmitAnswerResult } from "./question-store.js";

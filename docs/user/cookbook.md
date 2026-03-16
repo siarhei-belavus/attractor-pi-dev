@@ -451,8 +451,76 @@ attractor run workflow.dot --simulate --auto-approve
 
 # With real LLM but auto-approved gates
 attractor run workflow.dot --auto-approve --logs-dir ./ci-logs/$BUILD_ID
+```
 
-## 15. Explicit Extension Allowlist (Discovery Off)
+`--auto-approve` only fabricates answers for `wait.human` routing gates. It intentionally fails on `human.interview` so pipelines do not silently invent operator-supplied values.
+
+## 15. Collect Deployment Parameters
+
+Collect operator data without changing branches.
+
+```dot
+digraph DeployInput {
+    graph [goal="Collect deployment parameters"]
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    collect [
+        type="human.interview",
+        label="Collect deployment input",
+        human.questions="[
+          {\\"key\\":\\"approved\\",\\"text\\":\\"Approve this deployment?\\",\\"type\\":\\"yes_no\\"},
+          {\\"key\\":\\"window\\",\\"text\\":\\"Deployment window\\",\\"type\\":\\"freeform\\",\\"required\\":false},
+          {\\"key\\":\\"strategy\\",\\"text\\":\\"Release strategy\\",\\"type\\":\\"multiple_choice\\",\\"options\\":[{\\"key\\":\\"rolling\\",\\"label\\":\\"Rolling\\"},{\\"key\\":\\"bluegreen\\",\\"label\\":\\"Blue/Green\\"}]}
+        ]"
+    ]
+
+    deploy [prompt="Deploy using operator-provided parameters"]
+
+    start -> collect -> deploy -> exit
+}
+```
+
+Downstream nodes can read:
+
+- `human.interview.answers`
+- `human.interview.approved`
+- `human.interview.window`
+- `human.interview.strategy`
+- `node.collect.human.interview.strategy`
+
+## 16. Approval Plus Notes
+
+Use `wait.human` for routing and `human.interview` for data capture when you need both.
+
+```dot
+digraph ApprovalWithNotes {
+    graph [goal="Approve and annotate a release"]
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    route [shape=hexagon, label="Release decision"]
+    note [
+        type="human.interview",
+        label="Capture approval notes",
+        human.questions="[
+          {\\"key\\":\\"decision\\",\\"text\\":\\"Confirm release decision\\",\\"type\\":\\"confirmation\\"},
+          {\\"key\\":\\"notes\\",\\"text\\":\\"Operator notes\\",\\"type\\":\\"freeform\\",\\"required\\":false}
+        ]"
+    ]
+
+    ship [prompt="Ship the approved release"]
+    rework [prompt="Address the requested changes"]
+
+    start -> route
+    route -> note   [label="[A] Approve"]
+    route -> rework [label="[R] Rework"]
+    note -> ship -> exit
+    rework -> exit
+}
+```
+
+## 17. Explicit Extension Allowlist (Discovery Off)
 
 Load only specific pi extensions, without auto-discovery:
 
@@ -475,7 +543,7 @@ attractor run workflow.dot
 
 This keeps extension loading deterministic and scoped to the explicit allowlist.
 
-## 16. Debugging Prompt and Tool Activation
+## 18. Debugging Prompt and Tool Activation
 
 Capture redacted agent internals for troubleshooting extension behavior:
 
@@ -495,7 +563,7 @@ If an extension unexpectedly modifies instructions, compare `system-prompt.md` w
 attractor validate workflow.dot || exit 1
 ```
 
-## 15. Combining Patterns
+## 19. Combining Patterns
 
 A production-grade pipeline combining multiple techniques.
 

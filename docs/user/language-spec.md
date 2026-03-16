@@ -130,10 +130,30 @@ These handlers are available only through explicit `type="..."` values in the cu
 
 | Type | Purpose | Key attrs | Key outputs |
 |------|---------|-----------|-------------|
+| `human.interview` | Collect one or more human answers into context without routing by edge. | `human.questions` | `human.interview.answers`, `human.interview.<key>`, `human.interview.<key>.label` |
 | `judge.rubric` | Structured rubric evaluation over a context artifact. | `judge.input_key`, `judge.threshold`, `judge.criteria` | `judge.rubric.score`, `judge.rubric.summary`, `judge.rubric.result` |
 | `failure.analyze` | Structured failure classification for downstream routing. | `failure.input_key`, `failure.hints` | `failure.analyze.class`, `failure.analyze.summary`, `failure.analyze.recommendation` |
 | `confidence.gate` | Deterministic autonomy vs escalation decision. | `confidence.threshold`, `confidence.score_key`, `confidence.failure_class_key`, `confidence.escalate_classes` | `confidence.gate.decision`, `confidence.gate.score`, `confidence.gate.reason` |
 | `quality.gate` | Deterministic pass/fail aggregation over configured checks. | `quality.checks` | `quality.gate.result`, `quality.gate.failed_checks`, `quality.gate.summary` |
+
+`wait.human` and `human.interview` are distinct:
+
+- `wait.human` remains the `shape=hexagon` routing gate and chooses the next edge from a single multiple-choice answer.
+- `human.interview` is opt-in via `type="human.interview"` and writes data into context instead of selecting an outgoing edge.
+
+`human.interview` authoring uses `human.questions` as a JSON array string:
+
+```dot
+collect_deploy_input [
+  type="human.interview",
+  label="Collect deployment input",
+  human.questions="[
+    {\\"key\\":\\"approved\\",\\"text\\":\\"Approve this deployment?\\",\\"type\\":\\"yes_no\\"},
+    {\\"key\\":\\"window\\",\\"text\\":\\"Deployment window\\",\\"type\\":\\"freeform\\",\\"required\\":false},
+    {\\"key\\":\\"strategy\\",\\"text\\":\\"Release strategy\\",\\"type\\":\\"multiple_choice\\",\\"options\\":[{\\"key\\":\\"rolling\\",\\"label\\":\\"Rolling\\"},{\\"key\\":\\"bluegreen\\",\\"label\\":\\"Blue/Green\\"}]}
+  ]"
+]
+```
 
 ## Chained Edges
 

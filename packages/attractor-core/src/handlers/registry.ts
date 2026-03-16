@@ -12,6 +12,7 @@ import {
   JudgeRubricHandler,
   ConfidenceGateHandler,
   WaitForHumanHandler,
+  HumanInterviewHandler,
   ParallelHandler,
   FanInHandler,
   ToolHandler,
@@ -45,6 +46,7 @@ export class HandlerRegistry {
     this.register("judge.rubric", new JudgeRubricHandler(backend));
     this.register("confidence.gate", new ConfidenceGateHandler());
     this.register("wait.human", new WaitForHumanHandler(interviewer));
+    this.register("human.interview", new HumanInterviewHandler(interviewer));
     this.register("parallel", new ParallelHandler());
     this.register("parallel.fan_in", new FanInHandler(backend));
     this.register("tool", new ToolHandler());

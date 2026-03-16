@@ -32,6 +32,24 @@ const HUMAN_GATE_DOT = `
   }
 `;
 
+const HUMAN_INTERVIEW_DOT = `
+  digraph HumanInterview {
+    graph [goal="Collect deployment parameters"]
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+    collect [
+      type="human.interview",
+      label="Collect deployment input",
+      human.questions="[
+        {\\"key\\":\\"approved\\",\\"text\\":\\"Approve deployment?\\",\\"type\\":\\"yes_no\\"},
+        {\\"key\\":\\"window\\",\\"text\\":\\"Deployment window\\",\\"type\\":\\"freeform\\",\\"required\\":false},
+        {\\"key\\":\\"strategy\\",\\"text\\":\\"Strategy\\",\\"type\\":\\"multiple_choice\\",\\"options\\":[{\\"key\\":\\"rolling\\",\\"label\\":\\"Rolling\\"},{\\"key\\":\\"bluegreen\\",\\"label\\":\\"Blue/Green\\"}]}
+      ]"
+    ]
+    start -> collect -> exit
+  }
+`;
+
 const MANAGER_LOOP_DOT = `
   digraph ManagerLoop {
     graph [goal="Observe child", default_fidelity="full"]
@@ -373,7 +391,7 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
     const { statusCode, data } = await request(
       "POST",
       "/pipelines/nonexistent/questions/q1/answer",
-      { value: "yes" },
+      { answers: { selection: { value: "yes" } } },
     );
     expect(statusCode).toBe(404);
     expect(data.error).toContain("Unknown runId");
@@ -391,7 +409,7 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
     const { statusCode, data } = await request(
       "POST",
       `/pipelines/${runId}/questions/q1/answer`,
-      { value: "yes" },
+      { answers: { selection: { value: "yes" } } },
     );
     expect(statusCode).toBe(409);
     expect(data.error).toContain("No pending question");
@@ -428,7 +446,7 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
     expect(runState.pendingQuestionId).toBe(pending.id);
 
     await request("POST", `/pipelines/${runId}/questions/${pending.id}/answer`, {
-      value: "A",
+      answers: { selection: { value: "A" } },
     });
     await waitForStatus(runId, ["completed", "failed"]);
   });
@@ -443,7 +461,7 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
     const { statusCode, data } = await request(
       "POST",
       `/pipelines/${runId}/questions/${pending.id}/answer`,
-      { value: "A" },
+      { answers: { selection: { value: "A" } } },
     );
     expect(statusCode).toBe(200);
     expect(data.accepted).toBe(true);
@@ -464,13 +482,13 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
     const wrong = await request(
       "POST",
       `/pipelines/${runId}/questions/${wrongQuestionId}/answer`,
-      { value: "A" },
+      { answers: { selection: { value: "A" } } },
     );
     expect(wrong.statusCode).toBe(409);
     expect(wrong.data.error).toContain("stale");
 
     await request("POST", `/pipelines/${runId}/questions/${pending.id}/answer`, {
-      value: "A",
+      answers: { selection: { value: "A" } },
     });
     await waitForStatus(runId, ["completed", "failed"]);
   });
@@ -485,14 +503,14 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
     const first = await request(
       "POST",
       `/pipelines/${runId}/questions/${pending.id}/answer`,
-      { value: "A" },
+      { answers: { selection: { value: "A" } } },
     );
     expect(first.statusCode).toBe(200);
 
     const second = await request(
       "POST",
       `/pipelines/${runId}/questions/${pending.id}/answer`,
-      { value: "A" },
+      { answers: { selection: { value: "A" } } },
     );
     expect(second.statusCode).toBe(409);
     expect(String(second.data.error)).toMatch(
@@ -512,13 +530,13 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
     const { statusCode, data } = await request(
       "POST",
       `/pipelines/${runId}/questions/${pending.id}/answer`,
-      { text: "some text but no value" },
+      { text: "some text but no answers map" },
     );
     expect(statusCode).toBe(400);
-    expect(data.error).toContain("Missing answer value");
+    expect(data.error).toContain("Missing answers map");
 
     await request("POST", `/pipelines/${runId}/questions/${pending.id}/answer`, {
-      value: "A",
+      answers: { selection: { value: "A" } },
     });
     await waitForStatus(runId, ["completed", "failed"]);
   });
@@ -541,7 +559,7 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
     const answerResponse = await request(
       "POST",
       `/pipelines/${runId}/questions/${pendingAfterRestart.id}/answer`,
-      { value: "A" },
+      { answers: { selection: { value: "A" } } },
     );
     expect(answerResponse.statusCode).toBe(200);
 
@@ -567,7 +585,7 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
     const answered = await request(
       "POST",
       `/pipelines/${runId}/questions/${pending.id}/answer`,
-      { value: "A" },
+      { answers: { selection: { value: "A" } } },
     );
     expect(answered.statusCode).toBe(200);
     await waitForStatus(runId, ["completed"]);
@@ -587,6 +605,71 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
         ),
       ),
     ).not.toThrow();
+  });
+
+  it("exposes interview prompts and accepts keyed answer maps", async () => {
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: HUMAN_INTERVIEW_DOT,
+    });
+    const runId = runData.runId as string;
+
+    const status = await waitForStatus(runId, ["waiting_for_answer"]);
+    const pending = status.pendingQuestion as {
+      id: string;
+      title: string;
+      questions: Array<{ key: string; type: string }>;
+    };
+    expect(pending.title).toBe("Collect deployment input");
+    expect(pending.questions.map((question) => question.key)).toEqual([
+      "approved",
+      "window",
+      "strategy",
+    ]);
+    expect(pending.questions.map((question) => question.type)).toEqual([
+      "yes_no",
+      "freeform",
+      "multiple_choice",
+    ]);
+
+    const answered = await request(
+      "POST",
+      `/pipelines/${runId}/questions/${pending.id}/answer`,
+      {
+        answers: {
+          approved: { value: "yes" },
+          window: { value: "after-hours", text: "after-hours" },
+          strategy: { value: "bluegreen" },
+        },
+      },
+    );
+    expect(answered.statusCode).toBe(200);
+
+    const finalStatus = await waitForStatus(runId, ["completed"]);
+    const context = finalStatus.context as Record<string, unknown>;
+    expect(context["human.interview.approved"]).toBe("yes");
+    expect(context["human.interview.window"]).toBe("after-hours");
+    expect(context["human.interview.strategy"]).toBe("bluegreen");
+    expect(context["human.interview.strategy.label"]).toBe("Blue/Green");
+  });
+
+  it("rejects malformed keyed answers for human.interview", async () => {
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: HUMAN_INTERVIEW_DOT,
+    });
+    const runId = runData.runId as string;
+    const pending = await waitForPendingQuestion(runId);
+
+    const invalid = await request(
+      "POST",
+      `/pipelines/${runId}/questions/${pending.id}/answer`,
+      {
+        answers: {
+          approved: { value: "maybe" },
+        },
+      },
+    );
+    expect(invalid.statusCode).toBe(400);
+    expect(String(invalid.data.error)).toContain("yes");
   });
 });
 
@@ -887,9 +970,8 @@ describe("HTTP Server: recovery hardening for malformed durable JSON", () => {
     expect(healthy.data.status).toBe("completed");
 
     const waiting = await request("GET", "/pipelines/run-1");
-    expect(waiting.statusCode).toBe(200);
-    expect(waiting.data.status).toBe("waiting_for_answer");
-    expect(waiting.data.pendingQuestion).toBeUndefined();
+    expect(waiting.statusCode).toBe(500);
+    expect(String(waiting.data.error)).toContain("Question record");
   });
 
   it("malformed checkpoint for one run does not block other run recovery", async () => {

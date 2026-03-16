@@ -8,6 +8,7 @@ export type HandlerType =
   | "judge.rubric"
   | "confidence.gate"
   | "wait.human"
+  | "human.interview"
   | "conditional"
   | "parallel"
   | "parallel.fan_in"

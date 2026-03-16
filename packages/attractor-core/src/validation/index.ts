@@ -2,6 +2,12 @@ import type { Graph, GraphNode } from "../model/graph.js";
 import { SHAPE_TO_HANDLER_TYPE, VALID_FIDELITY_MODES } from "../model/types.js";
 import { validateConditionSyntax } from "../conditions/index.js";
 import { validateStylesheetSyntax } from "../stylesheet/index.js";
+import {
+  HUMAN_INTERVIEW_PARSED_ATTR,
+  HUMAN_INTERVIEW_QUESTIONS_ATTR,
+  isHumanPromptQuestionType,
+} from "../handlers/human-prompt.js";
+import { QuestionType, type HumanPromptQuestion } from "../handlers/types.js";
 
 export enum Severity {
   ERROR = "error",
@@ -218,6 +224,7 @@ const KNOWN_HANDLER_TYPES = new Set([
   "judge.rubric",
   "confidence.gate",
   "wait.human",
+  "human.interview",
   "conditional",
   "parallel",
   "parallel.fan_in",
@@ -334,6 +341,44 @@ const promptOnLlmNodesRule: LintRule = {
           message: `LLM node '${node.id}' has no prompt and label is the same as ID`,
           nodeId: node.id,
           fix: "Add a prompt attribute or meaningful label",
+        });
+      }
+    }
+    return diags;
+  },
+};
+
+const humanInterviewQuestionsRule: LintRule = {
+  name: "human_interview_questions",
+  apply(graph) {
+    const diags: Diagnostic[] = [];
+    for (const node of graph.nodes.values()) {
+      const handlerType = graph.resolveHandlerType(node);
+      if (handlerType !== "human.interview") {
+        continue;
+      }
+
+      const raw = node.attrs[HUMAN_INTERVIEW_QUESTIONS_ATTR];
+      if (typeof raw !== "string" || raw.trim().length === 0) {
+        diags.push({
+          rule: "human_interview_questions",
+          severity: Severity.ERROR,
+          message: `Node '${node.id}' requires ${HUMAN_INTERVIEW_QUESTIONS_ATTR} as a JSON array`,
+          nodeId: node.id,
+        });
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        const questions = parseHumanInterviewQuestions(node, parsed);
+        node.attrs[HUMAN_INTERVIEW_PARSED_ATTR] = questions;
+      } catch (error) {
+        diags.push({
+          rule: "human_interview_questions",
+          severity: Severity.ERROR,
+          message: `Invalid ${HUMAN_INTERVIEW_QUESTIONS_ATTR} on node '${node.id}': ${String(error)}`,
+          nodeId: node.id,
         });
       }
     }
@@ -481,6 +526,7 @@ export const BUILT_IN_RULES: LintRule[] = [
   retryTargetExistsRule,
   goalGateHasRetryRule,
   promptOnLlmNodesRule,
+  humanInterviewQuestionsRule,
   contextKeysValidRule,
   contextKeysFlatUsageRule,
   varsDeclaredRule,
@@ -526,4 +572,92 @@ export function validateOrRaise(
     );
   }
   return diagnostics;
+}
+
+function parseHumanInterviewQuestions(
+  node: GraphNode,
+  parsed: unknown,
+): HumanPromptQuestion[] {
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error("must be a non-empty JSON array");
+  }
+
+  const seenKeys = new Set<string>();
+
+  return parsed.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`question ${index + 1} must be an object`);
+    }
+
+    const question = entry as Record<string, unknown>;
+    const key = requireString(question.key, `question ${index + 1} key`);
+    if (seenKeys.has(key)) {
+      throw new Error(`question key '${key}' must be unique within node '${node.id}'`);
+    }
+    seenKeys.add(key);
+
+    const text = requireString(question.text, `question '${key}' text`);
+    const type = question.type;
+    if (!isHumanPromptQuestionType(type)) {
+      throw new Error(`question '${key}' has unknown type '${String(type ?? "")}'`);
+    }
+
+    const options = parseHumanInterviewOptions(question.options, key, type);
+    const required = question.required === false ? false : true;
+    const defaultValue = parseDefaultValue(question.default, key);
+
+    return {
+      key,
+      text,
+      type,
+      ...(options ? { options } : {}),
+      ...(defaultValue !== undefined ? { default: defaultValue } : {}),
+      required,
+    };
+  });
+}
+
+function parseHumanInterviewOptions(
+  rawOptions: unknown,
+  key: string,
+  type: QuestionType,
+) {
+  if (type !== QuestionType.MULTIPLE_CHOICE) {
+    if (rawOptions !== undefined) {
+      throw new Error(`question '${key}' must not define options unless type is multiple_choice`);
+    }
+    return undefined;
+  }
+
+  if (!Array.isArray(rawOptions) || rawOptions.length === 0) {
+    throw new Error(`question '${key}' must define at least one option`);
+  }
+
+  return rawOptions.map((option, index) => {
+    if (!option || typeof option !== "object" || Array.isArray(option)) {
+      throw new Error(`question '${key}' option ${index + 1} must be an object`);
+    }
+    const entry = option as Record<string, unknown>;
+    return {
+      key: requireString(entry.key, `question '${key}' option ${index + 1} key`),
+      label: requireString(entry.label, `question '${key}' option ${index + 1} label`),
+    };
+  });
+}
+
+function parseDefaultValue(value: unknown, key: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`question '${key}' default must be a string`);
+  }
+  return value;
+}
+
+function requireString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return value;
 }

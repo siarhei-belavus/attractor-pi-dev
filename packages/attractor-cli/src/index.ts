@@ -14,8 +14,11 @@ import {
   InMemorySteeringQueue,
   type PipelineEvent,
   type CodergenBackend,
+  QuestionStore,
+  type HumanPromptAnswerMap,
 } from "@attractor/core";
 import { createDebugAgentWriter } from "./debug-agent.js";
+import { DurableConsoleInterviewer } from "./durable-console-interviewer.js";
 import {
   createTestBackend,
   createTestInterviewer,
@@ -47,6 +50,8 @@ export async function main(argv: string[] = process.argv.slice(2), deps: CliDeps
     validateCommand(args.slice(1));
   } else if (command === "serve") {
     await serveCommand(args.slice(1), deps);
+  } else if (command === "answer") {
+    await answerCommand(args.slice(1));
   } else if (command === "steer") {
     await steerCommand(args.slice(1));
   } else {
@@ -76,12 +81,14 @@ Usage:
   attractor run <file.dot> [options]
   attractor validate <file.dot>
   attractor serve [options]
+  attractor answer --run <run-id> --prompt <prompt-id> --answers <json>
   attractor steer <run-id> --message <text> [options]
 
 Commands:
   run        Execute a pipeline from a DOT file
   validate   Check a DOT file for errors
   serve      Start HTTP server for web-based pipeline management
+  answer     Submit durable human answers for a local run
   steer      Send a steering message to a running pipeline
 
 Options (run):
@@ -100,6 +107,11 @@ Options (serve):
   --host <addr>      Host to bind to (default: 127.0.0.1)
   --provider <name>  LLM provider for served runs (default: pi settings, else anthropic)
   --model <id>       LLM model ID for served runs (default: pi settings, else claude-sonnet-4-5-20250929)
+
+Options (answer):
+  --run <id>         Local run id under .attractor-runs
+  --prompt <id>      Durable prompt id to answer
+  --answers <json>   Stringified answer map
 
 Options (steer):
   --message <text>   Steering message to inject
@@ -201,7 +213,9 @@ export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
   const debugWriter = debugAgent ? createDebugAgentWriter(logsRoot) : null;
   const interviewer =
     createTestInterviewer(testConfig, logsRoot, runId) ??
-    (autoApprove ? new AutoApproveInterviewer() : new ConsoleInterviewer());
+    (autoApprove
+      ? new AutoApproveInterviewer()
+      : createCliInterviewer(runId, logsRoot));
   const resumeFrom = resumeFromFlag ?? testConfig?.resumeFrom;
   const testBackend = createTestBackend(testConfig);
 
@@ -358,6 +372,64 @@ export async function serveCommand(args: string[], deps: CliDeps = defaultDeps) 
   });
 }
 
+export async function answerCommand(args: string[]) {
+  const runId = getArgValue(args, "--run");
+  const promptId = getArgValue(args, "--prompt");
+  const answersRaw = getArgValue(args, "--answers");
+
+  if (!runId) {
+    console.error("Error: --run is required");
+    process.exit(1);
+  }
+  if (!promptId) {
+    console.error("Error: --prompt is required");
+    process.exit(1);
+  }
+  if (!answersRaw) {
+    console.error("Error: --answers is required");
+    process.exit(1);
+  }
+
+  let answers: HumanPromptAnswerMap;
+  try {
+    answers = JSON.parse(answersRaw) as HumanPromptAnswerMap;
+  } catch (error) {
+    console.error(`Error: --answers must be valid JSON: ${String(error)}`);
+    process.exit(1);
+  }
+
+  const logsRoot = path.join(process.cwd(), ".attractor-runs", runId);
+  if (!fs.existsSync(logsRoot)) {
+    console.error(`Error: run not found: ${logsRoot}`);
+    process.exit(1);
+  }
+
+  const store = new QuestionStore(logsRoot);
+  const submit = store.submitAnswers(runId, promptId, answers);
+  if (!submit.ok) {
+    if (submit.reason === "not_found") {
+      console.error(`Unknown prompt: ${promptId}`);
+      process.exit(1);
+    }
+    if (submit.reason === "run_mismatch") {
+      console.error(`Prompt ${promptId} does not belong to run ${runId}`);
+      process.exit(1);
+    }
+    if (submit.reason === "already_answered") {
+      console.error(`Prompt ${promptId} was already answered`);
+      process.exit(1);
+    }
+    if (submit.reason === "invalid_answers") {
+      console.error(submit.message ?? `Prompt ${promptId} answers are invalid`);
+      process.exit(1);
+    }
+    console.error(`Prompt ${promptId} is not pending`);
+    process.exit(1);
+  }
+
+  console.log(`Stored answers for ${promptId}`);
+}
+
 export async function steerCommand(args: string[]) {
   const runId = args.find((arg) => !arg.startsWith("--"));
   const message = getArgValue(args, "--message");
@@ -403,6 +475,13 @@ function warnIfDebugUnsupported(
   }
 }
 
+function createCliInterviewer(runId: string, logsRoot: string) {
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    return new ConsoleInterviewer();
+  }
+  return new DurableConsoleInterviewer(runId, logsRoot);
+}
+
 function printEvent(event: PipelineEvent, verbose: boolean) {
   const ts = new Date().toLocaleTimeString();
   switch (event.type) {
@@ -438,4 +517,11 @@ function printEvent(event: PipelineEvent, verbose: boolean) {
     default:
       if (verbose) console.log(`[${ts}] ${event.type}`);
   }
+}
+
+if (shouldRunAsCliEntry()) {
+  main().catch((error) => {
+    console.error(String(error));
+    process.exit(1);
+  });
 }
