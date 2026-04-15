@@ -3,6 +3,7 @@ import {
   AuthStorage,
   ModelRegistry,
   type AgentSessionEvent,
+  type SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import { existsSync, readFileSync } from "node:fs";
@@ -12,6 +13,8 @@ import type {
   AttachedExecutionSnapshot,
   AttachedExecutionSupervisor,
   AttachedExecutionTarget,
+  BackendCallContext,
+  BackendSessionAccessMode,
   CapableBackend,
   CodergenBackend,
   DebugEvent,
@@ -25,6 +28,7 @@ import type {
   SteeringTarget,
 } from "@attractor/core";
 import {
+  BACKEND_SESSION_PERSISTENCE_CONTEXT_KEY,
   StageStatus,
   getCurrentSteeringTarget,
 } from "@attractor/core";
@@ -51,6 +55,10 @@ import {
   parsePiResourcePolicyFromEnv,
   resolvePiResourcePolicy,
 } from "./extension-resource-policy.js";
+import {
+  PersistentSessionStore,
+  type PersistentSessionResolutionMode,
+} from "./persistent-session-store.js";
 
 export interface PiSessionObserverSnapshot {
   childStatus: "running" | "completed" | "failed";
@@ -63,7 +71,7 @@ export interface PiSessionObserverSnapshot {
     message_count: number;
     active_tools: string[];
     tool_policy_diagnostics: string[];
-    thread_key: string;
+    backend_execution_ref: string;
     provider: string;
     model_id: string;
     turn_count: number;
@@ -140,6 +148,8 @@ function loadPiAgentSettingsDefaults(): PiAgentSettingsDefaults {
   }
 }
 
+const CANONICAL_PERSISTENCE_MARKER_VALUE = "pi_manifest_v1";
+
 /**
  * CodergenBackend implementation using pi-mono's coding agent,
  * wrapped with spec-compliant Session (state machine, limits, loop detection).
@@ -159,6 +169,7 @@ export class PiAgentCodergenBackend
   private sessions = new Map<string, Session>();
   private sessionMetadata = new Map<string, { provider: string; modelId: string }>();
   private childExecutionBindings = new Map<string, SteeringTarget>();
+  private persistentSessionStore = new PersistentSessionStore();
   private authStorage: AuthStorage;
   private modelRegistry: ModelRegistry;
   private executionEnv?: ExecutionEnvironment;
@@ -189,65 +200,34 @@ export class PiAgentCodergenBackend
     node: GraphNode,
     prompt: string,
     context: Context,
+    backendCallContext: BackendCallContext,
   ): Promise<string | Outcome> {
     const provider = node.llmProvider || this.options.defaultProvider;
     const modelId = node.llmModel || this.options.defaultModel;
     const thinkingLevel = this.resolveThinkingLevel(node);
-    const threadKey = this.resolveThreadKey(node, context);
-    const cwd = this.options.cwd;
+    const backendExecutionRef = this.resolveBackendExecutionRef(node);
+    const cacheKey = this.getRunScopedSessionKey(
+      backendCallContext.runId,
+      backendExecutionRef,
+    );
 
-    // Get or create session
     let session: Session;
-    if (this.options.reuseSessions && this.sessions.has(threadKey)) {
-      session = this.sessions.get(threadKey)!;
-      this.sessionMetadata.set(threadKey, { provider, modelId });
-      // Update reasoning effort if needed
-      session.setReasoningEffort(thinkingLevel);
-    } else {
-      // Resolve profile
-      const profile = this.resolveProfile(provider, modelId, thinkingLevel, cwd);
-
-      // Create execution environment if not provided
-      const execEnv = this.executionEnv ?? new LocalExecutionEnvironment({ cwd });
-
-      session = new Session({
-        profile,
-        executionEnv: execEnv,
-        config: this.options.sessionConfig,
-        resourcePolicy: this.resourcePolicy,
-        authStorage: this.authStorage,
-        modelRegistry: this.modelRegistry,
-        onWarning: this.warn.bind(this),
-      });
-
-      // Wire up event listeners
-      if (this.options.debugSink) {
-        session.subscribe((event) => {
-          this.options.debugSink?.writeEvent(this.mapDebugEvent(threadKey, event));
-        });
-      }
-
-      if (this.options.reuseSessions) {
-        this.sessions.set(threadKey, session);
-        this.sessionMetadata.set(threadKey, { provider, modelId });
-      }
-    }
-
     try {
-      await session.initialize();
-      context.set("internal.current_backend_execution_ref", threadKey);
-    } catch (err) {
-      this.emitDebugSnapshot(
-        "before_submit",
-        session,
-        threadKey,
+      session = await this.ensureRunSession({
+        backendCallContext,
+        context,
+        backendExecutionRef,
+        cacheKey,
         provider,
         modelId,
-        context.getString("internal.current_node_id") || undefined,
-      );
+        thinkingLevel,
+      });
+      context.set("internal.current_backend_execution_ref", backendExecutionRef);
+      context.set(BACKEND_SESSION_PERSISTENCE_CONTEXT_KEY, CANONICAL_PERSISTENCE_MARKER_VALUE);
+    } catch (err) {
       return {
         status: StageStatus.FAIL,
-        failureReason: `Agent initialization failed: ${err}`,
+        failureReason: `Persistent session setup failed: ${err}`,
       };
     }
 
@@ -257,28 +237,29 @@ export class PiAgentCodergenBackend
     this.emitDebugSnapshot(
       "before_submit",
       session,
-      threadKey,
+      cacheKey,
       provider,
       modelId,
       context.getString("internal.current_node_id") || undefined,
     );
 
-    // Send prompt and wait for completion
     try {
       await session.submit(prompt);
     } catch (err) {
-      context.set("internal.last_completed_backend_execution_ref", threadKey);
+      context.set("internal.last_completed_backend_execution_ref", backendExecutionRef);
+      context.set(BACKEND_SESSION_PERSISTENCE_CONTEXT_KEY, CANONICAL_PERSISTENCE_MARKER_VALUE);
       return {
         status: StageStatus.FAIL,
         failureReason: `Agent execution failed: ${err}`,
       };
     }
 
-    context.set("internal.last_completed_backend_execution_ref", threadKey);
+    context.set("internal.last_completed_backend_execution_ref", backendExecutionRef);
+    context.set(BACKEND_SESSION_PERSISTENCE_CONTEXT_KEY, CANONICAL_PERSISTENCE_MARKER_VALUE);
     this.emitDebugSnapshot(
       "after_submit",
       session,
-      threadKey,
+      cacheKey,
       provider,
       modelId,
       context.getString("internal.current_node_id") || undefined,
@@ -292,9 +273,7 @@ export class PiAgentCodergenBackend
       };
     }
 
-    // Extract the assistant's text response
     const responseText = session.getLastAssistantText() ?? "";
-
     if (!responseText) {
       return {
         status: StageStatus.FAIL,
@@ -354,17 +333,303 @@ export class PiAgentCodergenBackend
     }
   }
 
-  /** Determine session reuse key from node/context */
-  private resolveThreadKey(node: GraphNode, context: Context): string {
-    const effectiveFidelity = context.getString("internal.effective_fidelity");
-    const resolvedThreadKey = context.getString("internal.thread_key");
-    if (effectiveFidelity === "full" && resolvedThreadKey) return resolvedThreadKey;
-    // 1. Explicit thread_id on node
-    if (node.threadId) return node.threadId;
-    // 2. Derived from class (subgraph)
-    if (node.classes.length > 0) return node.classes[0]!;
-    // 3. Fallback to node ID
-    return node.id;
+  private resolveBackendExecutionRef(node: GraphNode): string {
+    return node.threadId || node.id;
+  }
+
+  private getRunScopedSessionKey(runId: string, backendExecutionRef: string): string {
+    return `${runId}::${backendExecutionRef}`;
+  }
+
+  private isCanonicalCheckpoint(context: Context): boolean {
+    return (
+      context.getString(BACKEND_SESSION_PERSISTENCE_CONTEXT_KEY) ===
+      CANONICAL_PERSISTENCE_MARKER_VALUE
+    );
+  }
+
+  private assertCachedSessionConsistency(
+    cacheKey: string,
+    provider: string,
+    modelId: string,
+  ): void {
+    const metadata = this.sessionMetadata.get(cacheKey);
+    if (!metadata) {
+      return;
+    }
+    if (metadata.provider !== provider) {
+      throw new Error(
+        `Persistent session '${cacheKey}' is locked to provider '${metadata.provider}', not '${provider}'`,
+      );
+    }
+    if (metadata.modelId !== modelId) {
+      throw new Error(
+        `Persistent session '${cacheKey}' is locked to model '${metadata.modelId}', not '${modelId}'`,
+      );
+    }
+  }
+
+  private resolveRunSessionMode(
+    context: Context,
+    backendExecutionRef: string,
+    sessionAccessMode: BackendSessionAccessMode,
+  ): PersistentSessionResolutionMode {
+    if (sessionAccessMode === "fresh") {
+      return "open_or_create";
+    }
+
+    if (!this.isCanonicalCheckpoint(context)) {
+      if (sessionAccessMode === "resume_strict") {
+        throw new Error(
+          "Checkpoint predates persistent Pi sessions; rerun with force to recreate canonical session state",
+        );
+      }
+      return "recreate";
+    }
+
+    if (sessionAccessMode === "resume_force") {
+      return "recreate";
+    }
+
+    const lastCompletedBackendExecutionRef = context.getString(
+      "internal.last_completed_backend_execution_ref",
+    );
+    if (lastCompletedBackendExecutionRef === backendExecutionRef) {
+      return "open_required";
+    }
+    return "open_or_create";
+  }
+
+  private resolveAttachedSessionMode(
+    context: Context,
+    sessionAccessMode: BackendSessionAccessMode,
+  ): PersistentSessionResolutionMode {
+    if (sessionAccessMode === "fresh") {
+      return "open_required";
+    }
+
+    if (!this.isCanonicalCheckpoint(context)) {
+      if (sessionAccessMode === "resume_strict") {
+        throw new Error(
+          "Checkpoint predates persistent Pi sessions; rerun with force to recreate canonical session state",
+        );
+      }
+      return "recreate";
+    }
+
+    return sessionAccessMode === "resume_force" ? "recreate" : "open_required";
+  }
+
+  private resolveQueuedSessionAccessMode(
+    target: SteeringTarget | null,
+    fallback: BackendSessionAccessMode,
+  ): BackendSessionAccessMode {
+    if (!target || !this.options.steeringQueue) {
+      return fallback;
+    }
+
+    const queued = this.options.steeringQueue.peek(target);
+    if (queued.some((message) => message.sessionAccessMode === "resume_force")) {
+      return "resume_force";
+    }
+    if (
+      fallback === "fresh" &&
+      queued.some((message) => message.sessionAccessMode === "resume_strict")
+    ) {
+      return "resume_strict";
+    }
+    return fallback;
+  }
+
+  private createSession(
+    cacheKey: string,
+    profile: ProviderProfile,
+    sessionManager: SessionManager,
+    onInitialized: (sessionManager: SessionManager) => Promise<void>,
+  ): Session {
+    const execEnv = this.executionEnv ?? new LocalExecutionEnvironment({ cwd: this.options.cwd });
+    const session = new Session({
+      profile,
+      executionEnv: execEnv,
+      config: this.options.sessionConfig,
+      resourcePolicy: this.resourcePolicy,
+      authStorage: this.authStorage,
+      modelRegistry: this.modelRegistry,
+      onWarning: this.warn.bind(this),
+      sessionManager,
+      onInitialized,
+    });
+
+    if (this.options.debugSink) {
+      session.subscribe((event) => {
+        this.options.debugSink?.writeEvent(this.mapDebugEvent(cacheKey, event));
+      });
+    }
+
+    return session;
+  }
+
+  private async createPersistentSession(args: {
+    cacheKey: string;
+    backendCallContext: BackendCallContext;
+    backendExecutionRef: string;
+    provider?: string;
+    modelId?: string;
+    thinkingLevel: ThinkingLevel;
+    mode: PersistentSessionResolutionMode;
+  }): Promise<Session> {
+    const access = this.persistentSessionStore.resolve({
+      sessionRoot: args.backendCallContext.sessionRoot,
+      backendExecutionRef: args.backendExecutionRef,
+      cwd: this.options.cwd,
+      mode: args.mode,
+      ...(args.provider ? { provider: args.provider } : {}),
+      ...(args.modelId ? { model: args.modelId } : {}),
+    });
+    const profile = this.resolveProfile(
+      access.manifest.provider,
+      access.manifest.model,
+      args.thinkingLevel,
+      this.options.cwd,
+    );
+    const session = this.createSession(
+      args.cacheKey,
+      profile,
+      access.sessionManager,
+      async (sessionManager) => {
+        const manifest = this.persistentSessionStore.commitAccess({
+          ...access,
+          sessionManager,
+        });
+        this.sessionMetadata.set(args.cacheKey, {
+          provider: manifest.provider,
+          modelId: manifest.model,
+        });
+      },
+    );
+    try {
+      await session.initialize();
+    } catch (error) {
+      this.emitDebugSnapshot(
+        "before_submit",
+        session,
+        args.cacheKey,
+        access.manifest.provider,
+        access.manifest.model,
+      );
+      throw error;
+    }
+    this.sessions.set(args.cacheKey, session);
+    this.sessionMetadata.set(args.cacheKey, {
+      provider: access.manifest.provider,
+      modelId: access.manifest.model,
+    });
+    return session;
+  }
+
+  private async ensureRunSession(args: {
+    backendCallContext: BackendCallContext;
+    context: Context;
+    backendExecutionRef: string;
+    cacheKey: string;
+    provider: string;
+    modelId: string;
+    thinkingLevel: ThinkingLevel;
+  }): Promise<Session> {
+    const mode = this.resolveRunSessionMode(
+      args.context,
+      args.backendExecutionRef,
+      args.backendCallContext.sessionAccessMode,
+    );
+    const cached = this.sessions.get(args.cacheKey);
+    if (cached && mode !== "recreate") {
+      this.assertCachedSessionConsistency(args.cacheKey, args.provider, args.modelId);
+      cached.setReasoningEffort(args.thinkingLevel);
+      return cached;
+    }
+    if (cached) {
+      await this.disposeCachedSession(args.cacheKey);
+    }
+
+    return this.createPersistentSession({
+      cacheKey: args.cacheKey,
+      backendCallContext: args.backendCallContext,
+      backendExecutionRef: args.backendExecutionRef,
+      provider: args.provider,
+      modelId: args.modelId,
+      thinkingLevel: args.thinkingLevel,
+      mode,
+    });
+  }
+
+  private async ensureAttachedSession(
+    target: AttachedExecutionTarget,
+    context: Context,
+    backendCallContext: BackendCallContext,
+  ): Promise<{ cacheKey: string; session: Session }> {
+    const cacheKey = this.getRunScopedSessionKey(
+      backendCallContext.runId,
+      target.backendExecutionRef,
+    );
+    const effectiveAccessMode = this.resolveQueuedSessionAccessMode(
+      {
+        runId: backendCallContext.runId,
+        backendExecutionRef: target.backendExecutionRef,
+        ...(target.branchKey ? { branchKey: target.branchKey } : {}),
+        ...(target.nodeId ? { nodeId: target.nodeId } : {}),
+      },
+      backendCallContext.sessionAccessMode,
+    );
+    const mode = this.resolveAttachedSessionMode(context, effectiveAccessMode);
+    const cached = this.sessions.get(cacheKey);
+    if (cached && mode !== "recreate") {
+      return { cacheKey, session: cached };
+    }
+    if (cached) {
+      await this.disposeCachedSession(cacheKey);
+    }
+
+    const metadata = this.sessionMetadata.get(cacheKey);
+    try {
+      const session = await this.createPersistentSession({
+        cacheKey,
+        backendCallContext,
+        backendExecutionRef: target.backendExecutionRef,
+        ...(metadata?.provider ? { provider: metadata.provider } : {}),
+        ...(metadata?.modelId ? { modelId: metadata.modelId } : {}),
+        thinkingLevel: this.options.defaultThinkingLevel,
+        mode,
+      });
+      return { cacheKey, session };
+    } catch (error) {
+      if (
+        mode !== "recreate" ||
+        metadata?.provider ||
+        metadata?.modelId ||
+        !String(error).includes("cannot be recreated without provider and model")
+      ) {
+        throw error;
+      }
+
+      const session = await this.createPersistentSession({
+        cacheKey,
+        backendCallContext,
+        backendExecutionRef: target.backendExecutionRef,
+        provider: this.options.defaultProvider,
+        modelId: this.options.defaultModel,
+        thinkingLevel: this.options.defaultThinkingLevel,
+        mode,
+      });
+      return { cacheKey, session };
+    }
+  }
+
+  private async disposeCachedSession(cacheKey: string): Promise<void> {
+    const session = this.sessions.get(cacheKey);
+    if (session) {
+      await session.dispose();
+    }
+    this.sessions.delete(cacheKey);
   }
 
   /** Clean up all sessions */
@@ -380,6 +645,7 @@ export class PiAgentCodergenBackend
     return {
       debugTelemetry: true,
       attachedExecutionSupervision: this.options.reuseSessions,
+      durableFullFidelityResume: true,
     };
   }
 
@@ -387,14 +653,17 @@ export class PiAgentCodergenBackend
     return this.options.reuseSessions ? this : null;
   }
 
-  getObserverSnapshot(bindingKey: string): PiSessionObserverSnapshot | null {
-    const session = this.sessions.get(bindingKey);
+  getObserverSnapshot(
+    cacheKey: string,
+    backendExecutionRef: string,
+  ): PiSessionObserverSnapshot | null {
+    const session = this.sessions.get(cacheKey);
     if (!session) {
       return null;
     }
 
     const runtime = session.getRuntimeSnapshot();
-    const metadata = this.sessionMetadata.get(bindingKey) ?? {
+    const metadata = this.sessionMetadata.get(cacheKey) ?? {
       provider: this.options.defaultProvider,
       modelId: this.options.defaultModel,
     };
@@ -418,7 +687,7 @@ export class PiAgentCodergenBackend
         message_count: runtime.messageCount,
         active_tools: runtime.activeTools,
         tool_policy_diagnostics: runtime.toolPolicyDiagnostics,
-        thread_key: bindingKey,
+        backend_execution_ref: backendExecutionRef,
         provider: metadata.provider,
         model_id: metadata.modelId,
         turn_count: runtime.turnCount,
@@ -484,7 +753,10 @@ export class PiAgentCodergenBackend
     };
   }
 
-  consumeQueuedSteering(target: SteeringTarget | null, sessionOverride?: { steer: (message: string) => void }): string[] {
+  consumeQueuedSteering(
+    target: SteeringTarget | null,
+    sessionOverride?: { steer: (message: string) => void },
+  ): string[] {
     return this.deliverSteeringMessages(target, sessionOverride);
   }
 
@@ -498,8 +770,10 @@ export class PiAgentCodergenBackend
 
     const boundTarget = this.resolveBoundTarget(target);
     const session = sessionOverride ?? (
-      boundTarget?.backendExecutionRef
-        ? this.sessions.get(boundTarget.backendExecutionRef)
+      boundTarget?.backendExecutionRef && boundTarget.runId
+        ? this.sessions.get(
+            this.getRunScopedSessionKey(boundTarget.runId, boundTarget.backendExecutionRef),
+          )
         : undefined
     );
     if (!session) {
@@ -560,6 +834,7 @@ export class PiAgentCodergenBackend
   async observeAttachedExecution(
     target: AttachedExecutionTarget,
     context: Context,
+    backendCallContext: BackendCallContext,
   ): Promise<AttachedExecutionSnapshot> {
     const managerTarget = this.resolveConsumerTarget(context);
     const steeringTarget: SteeringTarget | null = managerTarget
@@ -570,9 +845,14 @@ export class PiAgentCodergenBackend
           ...(target.nodeId ? { nodeId: target.nodeId } : {}),
         }
       : null;
-    this.consumeQueuedSteering(steeringTarget);
+    const { cacheKey, session } = await this.ensureAttachedSession(
+      target,
+      context,
+      backendCallContext,
+    );
+    this.consumeQueuedSteering(steeringTarget, session);
 
-    const snapshot = this.getObserverSnapshot(target.backendExecutionRef);
+    const snapshot = this.getObserverSnapshot(cacheKey, target.backendExecutionRef);
     if (!snapshot) {
       throw new Error(
         `Manager loop child session '${target.backendExecutionRef}' is unavailable`,
@@ -589,12 +869,10 @@ export class PiAgentCodergenBackend
   async steerAttachedExecution(
     target: AttachedExecutionTarget,
     message: string,
-    _context: Context,
+    context: Context,
+    backendCallContext: BackendCallContext,
   ): Promise<void> {
-    const session = this.sessions.get(target.backendExecutionRef);
-    if (!session) {
-      throw new Error(`Attached execution '${target.backendExecutionRef}' is unavailable`);
-    }
+    const { session } = await this.ensureAttachedSession(target, context, backendCallContext);
     session.steer(message);
   }
 }

@@ -520,6 +520,51 @@ describe("HTTP Server: POST /pipelines/{id}/questions/{qid}/answer", () => {
     await waitForStatus(runId, ["completed", "failed"]);
   });
 
+  it("passes strict vs force resume mode through the answer path", async () => {
+    const seenModes: string[] = [];
+    await restartServer({
+      backend: {
+        async run(_node, _prompt, _context, backendCallContext) {
+          seenModes.push(backendCallContext.sessionAccessMode);
+          return "ok";
+        },
+      },
+    });
+
+    const { data: strictRunData } = await request("POST", "/pipelines", {
+      dotSource: HUMAN_GATE_DOT,
+    });
+    const strictRunId = strictRunData.runId as string;
+    const strictPending = await waitForPendingQuestion(strictRunId, 4000);
+
+    const strictAnswered = await request(
+      "POST",
+      `/pipelines/${strictRunId}/questions/${strictPending.id}/answer`,
+      { answers: { selection: { value: "A" } } },
+    );
+    expect(strictAnswered.statusCode).toBe(200);
+    await waitForStatus(strictRunId, ["completed", "failed"]);
+
+    const { data: forceRunData } = await request("POST", "/pipelines", {
+      dotSource: HUMAN_GATE_DOT,
+    });
+    const forceRunId = forceRunData.runId as string;
+    const forcePending = await waitForPendingQuestion(forceRunId, 4000);
+
+    const forceAnswered = await request(
+      "POST",
+      `/pipelines/${forceRunId}/questions/${forcePending.id}/answer`,
+      {
+        answers: { selection: { value: "A" } },
+        force: true,
+      },
+    );
+    expect(forceAnswered.statusCode).toBe(200);
+    await waitForStatus(forceRunId, ["completed", "failed"]);
+
+    expect(seenModes).toEqual(["resume_strict", "resume_force"]);
+  });
+
   it("rejects answer with missing value", async () => {
     const { data: runData } = await request("POST", "/pipelines", {
       dotSource: HUMAN_GATE_DOT,
@@ -712,6 +757,50 @@ describe("HTTP Server: POST /pipelines/{id}/steer", () => {
       {
         message: "Focus on the failing test first.",
         source: "api",
+        sessionAccessMode: "resume_strict",
+      },
+    ]);
+  });
+
+  it("queues force steering for a running manager loop", async () => {
+    const steeringQueue = new InMemorySteeringQueue();
+
+    await restartServer({
+      steeringQueue,
+      backend: {
+        async run(_node, _prompt, context) {
+          context.set("internal.current_backend_execution_ref", "child-thread");
+          context.set("internal.last_completed_backend_execution_ref", "child-thread");
+          context.set("internal.backend_session_persistence", "pi_manifest_v1");
+          return "ok";
+        },
+      },
+      managerObserverFactory: async () => ({
+        observe: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          return { childStatus: "completed", childOutcome: "success" };
+        },
+      }),
+    });
+
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: MANAGER_LOOP_DOT,
+    });
+    const runId = runData.runId as string;
+
+    await waitForStatus(runId, ["running"], 5000, 25);
+    const response = await request("POST", `/pipelines/${runId}/steer`, {
+      message: "Recreate the child session.",
+      force: true,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(
+      steeringQueue.peek({ runId, childExecutionId: `${runId}:manager:attached-child` }),
+    ).toMatchObject([
+      {
+        message: "Recreate the child session.",
+        sessionAccessMode: "resume_force",
       },
     ]);
   });
@@ -878,6 +967,7 @@ describe("HTTP Server: recovery hardening for malformed durable JSON", () => {
       {
         message: "Resume carefully",
         source: "api",
+        sessionAccessMode: "resume_strict",
       },
     ]);
   });

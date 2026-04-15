@@ -1,3 +1,4 @@
+import type { BackendSessionAccessMode } from "../backend/contracts.js";
 import type { Context } from "../state/context.js";
 
 export interface SteeringTarget {
@@ -16,6 +17,7 @@ export interface SteeringMessage {
   message: string;
   source: SteeringSource;
   createdAt: string;
+  sessionAccessMode?: Exclude<BackendSessionAccessMode, "fresh">;
 }
 
 export interface SteeringQueue {

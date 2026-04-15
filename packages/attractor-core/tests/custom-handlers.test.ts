@@ -5,6 +5,7 @@ import {
   JudgeRubricHandler,
   QualityGateHandler,
 } from "../src/handlers/handlers.js";
+import { createBackendCallContext } from "../src/backend/contracts.js";
 import { GOVERNANCE_CONTEXT_KEYS } from "../src/handlers/governance-contract.js";
 import { Context } from "../src/state/context.js";
 import { StageStatus } from "../src/state/types.js";
@@ -53,6 +54,12 @@ const stubGraph = {
   },
 } as Graph;
 
+const backendCallContext = createBackendCallContext({
+  runId: "test-run",
+  logsRoot: "/tmp",
+  sessionAccessMode: "fresh",
+});
+
 describe("JudgeRubricHandler", () => {
   it("writes deterministic rubric outputs on pass", async () => {
     const ctx = new Context();
@@ -77,6 +84,7 @@ describe("JudgeRubricHandler", () => {
       ctx,
       stubGraph,
       "/tmp",
+      backendCallContext,
     );
 
     expect(outcome.status).toBe(StageStatus.SUCCESS);
@@ -106,6 +114,7 @@ describe("JudgeRubricHandler", () => {
       ctx,
       stubGraph,
       "/tmp",
+      backendCallContext,
     );
 
     expect(outcome.status).toBe(StageStatus.FAIL);
@@ -132,6 +141,7 @@ describe("FailureAnalyzeHandler", () => {
       ctx,
       stubGraph,
       "/tmp",
+      backendCallContext,
     );
 
     expect(outcome.status).toBe(StageStatus.SUCCESS);
@@ -160,6 +170,7 @@ describe("FailureAnalyzeHandler", () => {
       ctx,
       stubGraph,
       "/tmp",
+      backendCallContext,
     );
 
     expect(outcome.status).toBe(StageStatus.FAIL);

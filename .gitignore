@@ -8,3 +8,5 @@ dist/
 .bv/
 .beads/
 tmp/
+.plans/
+.serena/

@@ -96,6 +96,7 @@ Options (run):
   --auto-approve     Auto-approve all human gates
   --logs-dir <path>  Output directory for logs (default: .attractor-runs/<timestamp>)
   --resume-from <path> Resume from an existing run checkpoint directory
+  --force            Force resume by recreating persistent sessions under canonical refs (requires --resume-from)
   --provider <name>  LLM provider (default: pi settings, else anthropic)
   --model <id>       LLM model ID (default: pi settings, else claude-sonnet-4-5-20250929)
   --debug-agent      Write redacted agent internals to run logs (system prompt, tools, thread events)
@@ -153,8 +154,14 @@ export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
 
   const logsDir = getArgValue(args, "--logs-dir");
   const resumeFromFlag = getArgValue(args, "--resume-from");
+  const forceResume = args.includes("--force");
   const provider = getArgValue(args, "--provider");
   const model = getArgValue(args, "--model");
+
+  if (forceResume && !resumeFromFlag) {
+    console.error("Error: --force requires --resume-from");
+    process.exit(1);
+  }
 
   // Parse --set key=value flags (repeatable)
   const variables: Record<string, string> = {};
@@ -244,6 +251,9 @@ export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
     interviewer,
     logsRoot,
     ...(resumeFrom ? { resumeFrom } : {}),
+    sessionAccessMode: resumeFrom
+      ? (forceResume ? "resume_force" : "resume_strict")
+      : "fresh",
     runId,
     steeringQueue,
     onEvent: (event) => {

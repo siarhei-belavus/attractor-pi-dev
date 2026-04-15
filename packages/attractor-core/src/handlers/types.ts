@@ -3,6 +3,7 @@ import type { Context } from "../state/context.js";
 import type { Outcome } from "../state/types.js";
 import type { SteeringQueue } from "../steering/queue.js";
 import type { ManagerChildExecution } from "../manager/child-execution.js";
+import type { BackendCallContext } from "../backend/contracts.js";
 
 /** Common interface for all node handlers */
 export interface Handler {
@@ -11,12 +12,18 @@ export interface Handler {
     context: Context,
     graph: Graph,
     logsRoot: string,
+    backendCallContext?: BackendCallContext,
   ): Promise<Outcome>;
 }
 
 /** Backend interface for LLM/code generation tasks */
 export interface CodergenBackend {
-  run(node: GraphNode, prompt: string, context: Context): Promise<string | Outcome>;
+  run(
+    node: GraphNode,
+    prompt: string,
+    context: Context,
+    backendCallContext: BackendCallContext,
+  ): Promise<string | Outcome>;
 }
 
 /** Human interaction question model */

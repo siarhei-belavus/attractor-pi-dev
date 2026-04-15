@@ -3,6 +3,7 @@ import { Context } from "../state/context.js";
 import type { Outcome } from "../state/types.js";
 import { StageStatus, failOutcome, successOutcome } from "../state/types.js";
 import { evaluateCondition } from "../conditions/index.js";
+import type { BackendCallContext } from "../backend/contracts.js";
 import type { CodergenBackend, Handler } from "./types.js";
 import {
   CONFIDENCE_DECISIONS,
@@ -27,6 +28,7 @@ export class JudgeRubricHandler implements Handler {
     context: Context,
     graph: Graph,
     logsRoot: string,
+    backendCallContext?: BackendCallContext,
   ): Promise<Outcome> {
     const parsedConfig = parseJudgeRubricConfig(node);
     if (!parsedConfig.ok) {
@@ -49,6 +51,10 @@ export class JudgeRubricHandler implements Handler {
       "Return JSON with fields score (number 0..1) and summary (string).",
     ].filter(Boolean).join("\n\n");
 
+    if (!backendCallContext) {
+      return failOutcome("Backend call context is missing");
+    }
+
     const backendResult = await executeStructuredBackend(
       node,
       context,
@@ -56,6 +62,7 @@ export class JudgeRubricHandler implements Handler {
       logsRoot,
       this.backend,
       prompt,
+      backendCallContext,
     );
     if ("outcome" in backendResult) {
       return backendResult.outcome;
@@ -99,6 +106,7 @@ export class FailureAnalyzeHandler implements Handler {
     context: Context,
     graph: Graph,
     logsRoot: string,
+    backendCallContext?: BackendCallContext,
   ): Promise<Outcome> {
     const parsedConfig = parseFailureAnalyzeConfig(node);
     if (!parsedConfig.ok) {
@@ -125,6 +133,10 @@ export class FailureAnalyzeHandler implements Handler {
       "Return JSON with fields class (transient|quality_gap|tool_error|spec_mismatch), summary (string), recommendation (string).",
     ].filter(Boolean).join("\n\n");
 
+    if (!backendCallContext) {
+      return failOutcome("Backend call context is missing");
+    }
+
     const backendResult = await executeStructuredBackend(
       node,
       context,
@@ -132,6 +144,7 @@ export class FailureAnalyzeHandler implements Handler {
       logsRoot,
       this.backend,
       prompt,
+      backendCallContext,
     );
     if ("outcome" in backendResult) {
       return backendResult.outcome;

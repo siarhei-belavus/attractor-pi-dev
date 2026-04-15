@@ -1,0 +1,14 @@
+digraph HumanInterviewConsoleDemo {
+    graph [goal="Demo a human.interview prompt in the terminal"]
+
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+
+    collect [
+        type="human.interview",
+        label="Console Interview Demo",
+        human.questions="[{\"key\":\"approved\",\"text\":\"Approve this simulated run?\",\"type\":\"yes_no\"},{\"key\":\"strategy\",\"text\":\"Pick a rollout strategy\",\"type\":\"multiple_choice\",\"options\":[{\"key\":\"rolling\",\"label\":\"Rolling\"},{\"key\":\"bluegreen\",\"label\":\"Blue/Green\"}]},{\"key\":\"notes\",\"text\":\"Any notes?\",\"type\":\"freeform\",\"required\":false}]"
+    ]
+
+    start -> collect -> exit
+}

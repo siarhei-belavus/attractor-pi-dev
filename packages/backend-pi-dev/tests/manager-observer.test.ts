@@ -1,18 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   applyManagerChildExecution,
-  createManagerChildExecution,
   Context,
-  InMemorySteeringQueue,
+  createManagerChildExecution,
   createSteeringMessage,
+  InMemorySteeringQueue,
 } from "@attractor/core";
 import { PiAgentCodergenBackend } from "../src/backend.js";
 import { SessionState } from "../src/session.js";
 
+const RESUME_CALL_CONTEXT = {
+  runId: "run-1",
+  logsRoot: "/tmp/run-1",
+  sessionRoot: "/tmp/run-1/sessions",
+  sessionAccessMode: "resume_strict" as const,
+};
+
 describe("Pi manager observer integration", () => {
   it("maps a bound session snapshot into manager observer telemetry", async () => {
     const backend = new PiAgentCodergenBackend({ reuseSessions: true }) as any;
-    backend.sessions.set("child-thread", {
+    backend.sessions.set("run-1::child-thread", {
       getRuntimeSnapshot: () => ({
         state: SessionState.AWAITING_INPUT,
         awaitingInput: true,
@@ -28,7 +35,7 @@ describe("Pi manager observer integration", () => {
       }),
       steer: vi.fn(),
     });
-    backend.sessionMetadata.set("child-thread", {
+    backend.sessionMetadata.set("run-1::child-thread", {
       provider: "anthropic",
       modelId: "claude-test",
     });
@@ -40,7 +47,9 @@ describe("Pi manager observer integration", () => {
       Context.fromSnapshot({
         "internal.run_id": "run-1",
         "internal.manager_child_execution_id": "run-1:manager:attached-child",
+        "internal.backend_session_persistence": "pi_manifest_v1",
       }),
+      RESUME_CALL_CONTEXT,
     );
 
     expect(snapshot).toEqual({
@@ -52,7 +61,7 @@ describe("Pi manager observer integration", () => {
         message_count: 4,
         active_tools: ["read", "edit"],
         tool_policy_diagnostics: ["diag"],
-        thread_key: "child-thread",
+        backend_execution_ref: "child-thread",
         provider: "anthropic",
         model_id: "claude-test",
         turn_count: 2,
@@ -64,7 +73,7 @@ describe("Pi manager observer integration", () => {
 
   it("maps terminal success into a resolved lock decision", () => {
     const backend = new PiAgentCodergenBackend({ reuseSessions: true }) as any;
-    backend.sessions.set("child-thread", {
+    backend.sessions.set("run-1::child-thread", {
       getRuntimeSnapshot: () => ({
         state: SessionState.CLOSED,
         awaitingInput: false,
@@ -81,7 +90,7 @@ describe("Pi manager observer integration", () => {
       steer: vi.fn(),
     });
 
-    expect(backend.getObserverSnapshot("child-thread")).toMatchObject({
+    expect(backend.getObserverSnapshot("run-1::child-thread", "child-thread")).toMatchObject({
       childStatus: "completed",
       childOutcome: "success",
       childLockDecision: "resolved",
@@ -95,7 +104,7 @@ describe("Pi manager observer integration", () => {
       steeringQueue,
     }) as any;
     const steerSpy = vi.fn();
-    backend.sessions.set("child-thread", {
+    backend.sessions.set("run-1::child-thread", {
       steer: steerSpy,
       getRuntimeSnapshot: () => ({
         state: SessionState.PROCESSING,
@@ -136,7 +145,7 @@ describe("Pi manager observer integration", () => {
     }) as any;
     const calls: string[] = [];
 
-    backend.sessions.set("child-thread", {
+    backend.sessions.set("run-1::child-thread", {
       steer: vi.fn((message: string) => {
         calls.push(`steer:${message}`);
       }),
@@ -157,7 +166,7 @@ describe("Pi manager observer integration", () => {
         };
       },
     });
-    backend.sessionMetadata.set("child-thread", {
+    backend.sessionMetadata.set("run-1::child-thread", {
       provider: "anthropic",
       modelId: "claude-test",
     });
@@ -176,6 +185,7 @@ describe("Pi manager observer integration", () => {
     const context = new Context();
     context.set("internal.run_id", "run-1");
     context.set("internal.manager_child_execution_id", "run-1:manager:attached-child");
+    context.set("internal.backend_session_persistence", "pi_manifest_v1");
     applyManagerChildExecution(
       context,
       createManagerChildExecution({
@@ -197,12 +207,10 @@ describe("Pi manager observer integration", () => {
         nodeId: "child",
       },
       context,
+      RESUME_CALL_CONTEXT,
     );
 
-    expect(calls).toEqual([
-      "steer:Focus on the failing test first",
-      "snapshot",
-    ]);
+    expect(calls).toEqual(["steer:Focus on the failing test first", "snapshot"]);
     expect(
       steeringQueue.peek({
         runId: "run-1",
@@ -211,12 +219,58 @@ describe("Pi manager observer integration", () => {
     ).toEqual([]);
   });
 
+  it("lazy-reopens an attached child session after cache loss", async () => {
+    const backend = new PiAgentCodergenBackend({ reuseSessions: true }) as any;
+    const fakeSession = {
+      steer: vi.fn(),
+      getRuntimeSnapshot: () => ({
+        state: SessionState.AWAITING_INPUT,
+        awaitingInput: true,
+        lastAssistantText: "Recovered child",
+        messageCount: 2,
+        activeTools: [],
+        toolPolicyDiagnostics: [],
+        turnCount: 1,
+        toolRoundCount: 1,
+        lastActivityAt: 99,
+        terminalOutcome: null,
+        failureReason: null,
+      }),
+    };
+
+    backend.ensureAttachedSession = vi.fn(async () => {
+      backend.sessions.set("run-1::child-thread", fakeSession);
+      backend.sessionMetadata.set("run-1::child-thread", {
+        provider: "anthropic",
+        modelId: "claude-test",
+      });
+      return {
+        cacheKey: "run-1::child-thread",
+        session: fakeSession,
+      };
+    });
+
+    const snapshot = await backend.observeAttachedExecution(
+      { backendExecutionRef: "child-thread" },
+      Context.fromSnapshot({
+        "internal.run_id": "run-1",
+        "internal.backend_session_persistence": "pi_manifest_v1",
+      }),
+      RESUME_CALL_CONTEXT,
+    );
+
+    expect(backend.ensureAttachedSession).toHaveBeenCalled();
+    expect(snapshot.status).toBe("running");
+    expect(snapshot.telemetry?.backend_execution_ref).toBe("child-thread");
+  });
+
   it("does not advertise attached supervision when session reuse is disabled", () => {
     const backend = new PiAgentCodergenBackend({ reuseSessions: false });
 
     expect(backend.getCapabilities()).toMatchObject({
       debugTelemetry: true,
       attachedExecutionSupervision: false,
+      durableFullFidelityResume: true,
     });
     expect(backend.asAttachedExecutionSupervisor()).toBeNull();
   });

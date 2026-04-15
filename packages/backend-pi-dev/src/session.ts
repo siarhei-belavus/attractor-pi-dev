@@ -118,6 +118,10 @@ export interface SessionOptions {
   depth?: number;
   /** Warning handler */
   onWarning?: (message: string) => void;
+  /** Backend-selected session manager */
+  sessionManager?: SessionManager;
+  /** Hook invoked after the underlying AgentSession is ready */
+  onInitialized?: (sessionManager: SessionManager) => void | Promise<void>;
 }
 
 export interface SessionRuntimeSnapshot {
@@ -161,6 +165,8 @@ export class Session {
   private customSystemPrompt?: string;
   private resourcePolicy?: PiResourcePolicy;
   private onWarning?: (message: string) => void;
+  private sessionManager: SessionManager;
+  private onInitialized?: (sessionManager: SessionManager) => void | Promise<void>;
   private toolPolicyDiagnostics: string[] = [];
   private preparedSystemPrompt?: string;
   private projectedActiveToolNames: string[] = [];
@@ -182,6 +188,8 @@ export class Session {
     this.customSystemPrompt = opts.systemPrompt;
     this.resourcePolicy = opts.resourcePolicy;
     this.onWarning = opts.onWarning;
+    this.sessionManager = opts.sessionManager ?? SessionManager.inMemory();
+    this.onInitialized = opts.onInitialized;
     this.authStorage = opts.authStorage ?? new AuthStorage();
     this.modelRegistry = opts.modelRegistry ?? new ModelRegistry(this.authStorage);
   }
@@ -272,7 +280,7 @@ export class Session {
       cwd,
       authStorage: this.authStorage,
       modelRegistry: this.modelRegistry,
-      sessionManager: SessionManager.inMemory(),
+      sessionManager: this.sessionManager,
       resourceLoader,
       customTools: this.getCustomToolDefinitions(),
     });
@@ -280,6 +288,7 @@ export class Session {
     this.agentSession = result.session;
     await this.agentSession.bindExtensions({});
     this.applyToolActivationPolicy();
+    await this.onInitialized?.(this.sessionManager);
 
     // Subscribe to agent events and re-emit as session events
     this.agentSession.subscribe((agentEvent: AgentSessionEvent) => {

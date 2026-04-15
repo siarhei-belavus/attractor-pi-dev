@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { preparePipeline } from "../engine/pipeline.js";
 import { PipelineRunner } from "../engine/runner.js";
 import type { RunConfig, RunResult } from "../engine/runner.js";
+import type { BackendSessionAccessMode } from "../backend/contracts.js";
 import type { PipelineEvent, EventListener } from "../events/index.js";
 import type {
   CodergenBackend,
@@ -208,7 +209,13 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     }
   }
 
-  function startRunner(run: RunState, resumeFrom?: string): void {
+  function startRunner(
+    run: RunState,
+    opts: {
+      resumeFrom?: string;
+      sessionAccessMode?: BackendSessionAccessMode;
+    } = {},
+  ): void {
     if (!run.graph) {
       run.status = "failed";
       run.error = "Run graph is unavailable";
@@ -238,7 +245,9 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       onManagerChildExecution: (execution) => {
         run.managerChildExecution = execution;
       },
-      ...(resumeFrom ? { resumeFrom } : {}),
+      ...(opts.resumeFrom ? { resumeFrom: opts.resumeFrom } : {}),
+      sessionAccessMode:
+        opts.sessionAccessMode ?? (opts.resumeFrom ? "resume_strict" : "fresh"),
       onEvent: (event: PipelineEvent) => {
         if (event.type === "stage_started") {
           run.currentNode = event.name;
@@ -361,7 +370,10 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
 
     for (const run of runs.values()) {
       if (run.status === "running") {
-        startRunner(run, run.logsRoot);
+        startRunner(run, {
+          resumeFrom: run.logsRoot,
+          sessionAccessMode: "resume_strict",
+        });
       }
     }
   }
@@ -409,7 +421,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     const run = createRunState(runId, logsRoot, parsed.dotSource, graph, "running");
     runs.set(runId, run);
     persistRunState(run);
-    startRunner(run);
+    startRunner(run, { sessionAccessMode: "fresh" });
 
     sendJson(res, 201, { runId });
   }
@@ -504,7 +516,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       return;
     }
 
-    let parsed: { answers?: HumanPromptAnswerMap };
+    let parsed: { answers?: HumanPromptAnswerMap; force?: boolean };
     try {
       parsed = JSON.parse(body);
     } catch {
@@ -514,6 +526,10 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
 
     if (!parsed.answers || typeof parsed.answers !== "object" || Array.isArray(parsed.answers)) {
       sendError(res, 400, "Missing answers map");
+      return;
+    }
+    if (parsed.force !== undefined && typeof parsed.force !== "boolean") {
+      sendError(res, 400, "force must be a boolean when provided");
       return;
     }
 
@@ -560,7 +576,10 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       run.error = null;
       run.result = null;
       persistRunState(run);
-      startRunner(run, run.logsRoot);
+      startRunner(run, {
+        resumeFrom: run.logsRoot,
+        sessionAccessMode: parsed.force ? "resume_force" : "resume_strict",
+      });
     }
 
     sendJson(res, 200, { accepted: true, questionId });
@@ -585,7 +604,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       return;
     }
 
-    let parsed: { message?: string };
+    let parsed: { message?: string; force?: boolean };
     try {
       parsed = JSON.parse(body);
     } catch {
@@ -595,6 +614,10 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
 
     if (!parsed.message || typeof parsed.message !== "string") {
       sendError(res, 400, "Missing or invalid message");
+      return;
+    }
+    if (parsed.force !== undefined && typeof parsed.force !== "boolean") {
+      sendError(res, 400, "force must be a boolean when provided");
       return;
     }
 
@@ -620,6 +643,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
         target,
         message: parsed.message,
         source: "api",
+        ...(parsed.force ? { sessionAccessMode: "resume_force" } : { sessionAccessMode: "resume_strict" }),
       }),
     );
 

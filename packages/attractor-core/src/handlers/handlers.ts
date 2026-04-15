@@ -16,6 +16,7 @@ import {
   getManagerChildExecution,
   getManagerChildSteeringTarget,
 } from "../manager/child-execution.js";
+import type { BackendCallContext } from "../backend/contracts.js";
 import type {
   Handler,
   CodergenBackend,
@@ -32,6 +33,10 @@ import {
   validateHumanPromptAnswers,
 } from "./human-prompt.js";
 import { resolveHumanInterviewPrompt } from "./human-prompt-resolver.js";
+import {
+  preserveBackendRuntimeContext,
+  syncBackendExecutionContext,
+} from "./shared/backend-runtime-context.js";
 import { evaluateCondition } from "../conditions/index.js";
 import { parseDuration } from "../model/types.js";
 import { sleep } from "../engine/retry.js";
@@ -75,6 +80,7 @@ export class CodergenHandler implements Handler {
     context: Context,
     graph: Graph,
     logsRoot: string,
+    backendCallContext?: BackendCallContext,
   ): Promise<Outcome> {
     // 1. Build prompt
     let prompt = node.prompt || node.label;
@@ -119,7 +125,10 @@ export class CodergenHandler implements Handler {
     let responseText: string;
     if (this.backend) {
       try {
-        const result = await this.backend.run(node, prompt, filteredContext);
+        if (!backendCallContext) {
+          return failOutcome("Backend call context is missing");
+        }
+        const result = await this.backend.run(node, prompt, filteredContext, backendCallContext);
         syncBackendExecutionContext(context, filteredContext);
         if (typeof result === "object" && "status" in result) {
           writeStatus(stageDir, result as Outcome);
@@ -717,6 +726,7 @@ export class FanInHandler implements Handler {
     context: Context,
     graph: Graph,
     logsRoot: string,
+    backendCallContext?: BackendCallContext,
   ): Promise<Outcome> {
     const resultsRaw = context.getString("parallel.results");
     if (!resultsRaw) {
@@ -749,7 +759,10 @@ export class FanInHandler implements Handler {
         writePromptContextArtifact(stageDir, promptAssembly.artifact);
         fs.writeFileSync(path.join(stageDir, "prompt.md"), evalPrompt);
 
-        const backendResult = await this.backend.run(node, evalPrompt, context);
+        if (!backendCallContext) {
+          return failOutcome("Backend call context is missing");
+        }
+        const backendResult = await this.backend.run(node, evalPrompt, context, backendCallContext);
         if (typeof backendResult === "object" && "status" in backendResult) {
           writeStatus(stageDir, backendResult as Outcome);
           return backendResult as Outcome;
@@ -1289,28 +1302,6 @@ function inferAttachedManagerChildExecution(
       ...(nodeId ? { nodeId } : {}),
     },
   });
-}
-
-function syncBackendExecutionContext(source: Context, backendContext: Context): void {
-  syncContextKey(source, backendContext, "internal.current_backend_execution_ref");
-  syncContextKey(source, backendContext, "internal.last_completed_backend_execution_ref");
-}
-
-function preserveBackendRuntimeContext(source: Context, backendContext: Context): void {
-  syncContextKey(backendContext, source, "internal.run_id");
-  syncContextKey(backendContext, source, "internal.current_node_id");
-  syncContextKey(backendContext, source, "internal.current_branch_key");
-  syncContextKey(backendContext, source, "internal.thread_key");
-  syncContextKey(backendContext, source, "internal.manager_child_execution_id");
-}
-
-function syncContextKey(target: Context, source: Context, key: string): void {
-  const value = source.getString(key);
-  if (value) {
-    target.set(key, value);
-  } else {
-    target.delete(key);
-  }
 }
 
 // ── Helpers ──

@@ -81,15 +81,16 @@ export function createTestBackend(config: CliTestConfig | null): CapableBackend 
 
   return {
     async run(node, _prompt, context) {
-      const backendExecutionRef =
-        context.getString("internal.thread_key") || `${node.id}-backend-ref`;
+      const backendExecutionRef = node.threadId || node.id;
       context.set("internal.current_backend_execution_ref", backendExecutionRef);
       context.set("internal.last_completed_backend_execution_ref", backendExecutionRef);
+      context.set("internal.backend_session_persistence", "pi_manifest_v1");
       return `[Test backend] ${node.id}`;
     },
     getCapabilities: () => ({
       attachedExecutionSupervision: true,
       debugTelemetry: false,
+      durableFullFidelityResume: true,
     }),
     asAttachedExecutionSupervisor: () => supervisor,
   };

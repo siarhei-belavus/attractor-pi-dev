@@ -5,7 +5,12 @@ import { Context } from "../../state/context.js";
 import { applyFidelity, resolveEffectiveFidelity } from "../../state/fidelity.js";
 import type { Outcome } from "../../state/types.js";
 import { failOutcome } from "../../state/types.js";
+import type { BackendCallContext } from "../../backend/contracts.js";
 import type { CodergenBackend } from "../types.js";
+import {
+  preserveBackendRuntimeContext,
+  syncBackendExecutionContext,
+} from "./backend-runtime-context.js";
 import { appendPromptContext, writePromptContextArtifact } from "./prompt-context.js";
 
 export type StructuredObject = Record<string, unknown>;
@@ -31,6 +36,7 @@ export async function executeStructuredBackend(
   logsRoot: string,
   backend: CodergenBackend | null,
   prompt: string,
+  backendCallContext: BackendCallContext,
 ): Promise<StructuredBackendResult> {
   const stageDir = path.join(logsRoot, node.id);
   fs.mkdirSync(stageDir, { recursive: true });
@@ -49,6 +55,7 @@ export async function executeStructuredBackend(
   );
   const filteredSnapshot = applyFidelity(context.snapshot(), fidelityMode);
   const filteredContext = Context.fromSnapshot(filteredSnapshot);
+  preserveBackendRuntimeContext(context, filteredContext);
   const promptAssembly = appendPromptContext(node, graph, context, prompt);
   const promptWithContext = fidelityMode !== "full"
     ? [synthesizePreamble(filteredSnapshot), promptAssembly.prompt].filter(Boolean).join("\n\n")
@@ -58,7 +65,8 @@ export async function executeStructuredBackend(
   writePromptContextArtifact(stageDir, promptAssembly.artifact);
 
   try {
-    const result = await backend.run(node, promptWithContext, filteredContext);
+    const result = await backend.run(node, promptWithContext, filteredContext, backendCallContext);
+    syncBackendExecutionContext(context, filteredContext);
     if (typeof result === "object" && result !== null && "status" in result) {
       const outcome = result as Outcome;
       writeStatus(stageDir, outcome);

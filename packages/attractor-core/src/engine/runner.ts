@@ -1,9 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Graph, GraphEdge, GraphNode } from "../model/graph.js";
-import type {
-  AttachedExecutionSupervisor,
-  CapableBackend,
+import {
+  createBackendCallContext,
+  type AttachedExecutionSupervisor,
+  type BackendCallContext,
+  type BackendSessionAccessMode,
+  type CapableBackend,
 } from "../backend/contracts.js";
 import { Context } from "../state/context.js";
 import { Checkpoint } from "../state/checkpoint.js";
@@ -59,6 +62,7 @@ export interface RunConfig {
   runId?: string;
   logsRoot?: string;
   resumeFrom?: string;
+  sessionAccessMode?: BackendSessionAccessMode;
   onEvent?: (event: PipelineEvent) => void;
   onManagerChildExecution?: (execution: ManagerChildExecution) => void;
 }
@@ -120,12 +124,29 @@ export class PipelineRunner {
             return new AttachedExecutionManagerObserver(
               supervisor,
               input.childExecution.attachedTarget,
+              (context) => this.createCallContext(context, input.logsRoot),
             );
           }
         }
         return this.config.managerObserverFactory?.(input) ?? null;
       });
     }
+  }
+
+  private createCallContext(context: Context, logsRoot: string): BackendCallContext {
+    const runId = context.getString("internal.run_id") || this.config.runId || path.basename(logsRoot);
+    const sessionAccessMode =
+      this.config.sessionAccessMode ?? (this.config.resumeFrom ? "resume_strict" : "fresh");
+    return createBackendCallContext({
+      runId,
+      logsRoot,
+      sessionAccessMode,
+    });
+  }
+
+  private supportsDurableFullFidelityResume(): boolean {
+    return (this.config.backend as CapableBackend | null | undefined)?.getCapabilities?.()
+      .durableFullFidelityResume === true;
   }
 
   /**
@@ -178,7 +199,13 @@ export class PipelineRunner {
       // Execute the handler for this node
       const handler = this.registry.resolve(currentNode);
       try {
-        lastOutcome = await handler.execute(currentNode, context, graph, logsRoot);
+        lastOutcome = await handler.execute(
+          currentNode,
+          context,
+          graph,
+          logsRoot,
+          this.createCallContext(context, logsRoot),
+        );
       } catch (err) {
         return failOutcome(String(err));
       }
@@ -356,7 +383,7 @@ export class PipelineRunner {
               lastNode.fidelity,
               graph.attrs.defaultFidelity,
             );
-            if (lastNodeFidelity === "full") {
+            if (lastNodeFidelity === "full" && !this.supportsDurableFullFidelityResume()) {
               degradeNextFidelity = true;
             }
           } else {
@@ -661,7 +688,13 @@ export class PipelineRunner {
 
     for (let attempt = 1; attempt <= retryPolicy.maxAttempts; attempt++) {
       try {
-        const outcome = await handler.execute(node, context, graph, logsRoot);
+        const outcome = await handler.execute(
+          node,
+          context,
+          graph,
+          logsRoot,
+          this.createCallContext(context, logsRoot),
+        );
 
         if (
           outcome.status === StageStatus.SUCCESS ||
@@ -1063,6 +1096,7 @@ class AttachedExecutionManagerObserver implements ManagerObserver {
   constructor(
     private readonly supervisor: AttachedExecutionSupervisor,
     private readonly target: import("../backend/contracts.js").AttachedExecutionTarget,
+    private readonly getBackendCallContext: (context: Context) => BackendCallContext,
   ) {}
 
   async observe(context: Context): Promise<{
@@ -1071,7 +1105,11 @@ class AttachedExecutionManagerObserver implements ManagerObserver {
     childLockDecision?: "resolved" | "reopen";
     telemetry?: Record<string, unknown>;
   }> {
-    const snapshot = await this.supervisor.observeAttachedExecution(this.target, context);
+    const snapshot = await this.supervisor.observeAttachedExecution(
+      this.target,
+      context,
+      this.getBackendCallContext(context),
+    );
     return {
       childStatus: snapshot.status,
       ...(snapshot.outcome ? { childOutcome: snapshot.outcome } : {}),

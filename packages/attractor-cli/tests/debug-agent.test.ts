@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -138,6 +138,83 @@ describe("debug agent writer", () => {
     symlinkSync(realEntry, linkedEntry);
 
     expect(shouldRunAsCliEntry(linkedEntry, pathToFileURL(realEntry).href)).toBe(true);
+  });
+
+  it("passes resume_force through runCommand when --force is paired with --resume-from", async () => {
+    const root = mkdtempSync(join(tmpdir(), "attractor-cli-force-"));
+    tempDirs.push(root);
+
+    const dotPath = join(root, "workflow.dot");
+    const logsPath = join(root, "logs");
+    const checkpointDir = join(root, "checkpoint");
+    mkdirSync(checkpointDir, { recursive: true });
+    writeFileSync(
+      dotPath,
+      `digraph Test {
+  graph [goal="Test force resume"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  work [label="Work", prompt="Say hello"]
+  start -> work -> exit
+}
+`,
+    );
+    writeFileSync(join(checkpointDir, "checkpoint.json"), JSON.stringify({
+      timestamp: new Date().toISOString(),
+      currentNode: "",
+      completedNodes: [],
+      nodeOutcomes: {},
+      nodeRetries: {},
+      context: {},
+      logs: [],
+    }), "utf-8");
+
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const seenModes: string[] = [];
+    await runCommand(
+      [dotPath, "--logs-dir", logsPath, "--resume-from", checkpointDir, "--force"],
+      {
+        createBackend: () => ({
+          async run(_node, _prompt, _context, backendCallContext) {
+            seenModes.push(backendCallContext.sessionAccessMode);
+            return "ok";
+          },
+          async dispose() {},
+        }),
+      },
+    );
+
+    expect(seenModes).toEqual(["resume_force"]);
+  });
+
+  it("rejects --force without --resume-from", async () => {
+    const root = mkdtempSync(join(tmpdir(), "attractor-cli-force-error-"));
+    tempDirs.push(root);
+    const dotPath = join(root, "workflow.dot");
+    writeFileSync(
+      dotPath,
+      `digraph Test {
+  graph [goal="Test force validation"]
+  start [shape=Mdiamond]
+  exit [shape=Msquare]
+  work [label="Work", prompt="Say hello"]
+  start -> work -> exit
+}
+`,
+    );
+
+    const exitError = new Error("exit");
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw exitError;
+    }) as never);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(runCommand([dotPath, "--force"])).rejects.toBe(exitError);
+    expect(errorSpy).toHaveBeenCalledWith("Error: --force requires --resume-from");
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("sends steering requests through the HTTP API", async () => {

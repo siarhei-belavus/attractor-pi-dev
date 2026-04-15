@@ -12,6 +12,7 @@ import type { PipelineEvent } from "../src/events/index.js";
 import { AutoApproveInterviewer, QueueInterviewer } from "../src/handlers/interviewers.js";
 import type { Answer, ManagerObserverFactory } from "../src/handlers/types.js";
 import { Checkpoint } from "../src/state/checkpoint.js";
+import { BACKEND_SESSION_PERSISTENCE_CONTEXT_KEY } from "../src/backend/contracts.js";
 
 let tmpDir: string;
 
@@ -2581,5 +2582,144 @@ describe("Integration: Stylesheet model override (spec §8 / 11.12)", () => {
 
     // Explicit attribute wins over stylesheet
     expect(graph.getNode("a").llmModel).toBe("gpt-4o");
+  });
+});
+
+describe("Integration: backend call context and durable resume capability", () => {
+  it("passes run-local backend call context with derived session root", async () => {
+    const { graph } = preparePipeline(`
+      digraph BackendCallContext {
+        graph [goal="backend context"]
+        start [shape=Mdiamond]
+        exit [shape=Msquare]
+        a [prompt="Do A"]
+        start -> a -> exit
+      }
+    `);
+
+    const seen: unknown[] = [];
+    const runner = new PipelineRunner({
+      runId: "run-ctx",
+      logsRoot: tmpDir,
+      sessionAccessMode: "fresh",
+      backend: {
+        async run(_node, _prompt, _context, backendCallContext) {
+          seen.push(backendCallContext);
+          return "done";
+        },
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(seen).toEqual([
+      {
+        runId: "run-ctx",
+        logsRoot: tmpDir,
+        sessionRoot: path.join(tmpDir, "sessions"),
+        sessionAccessMode: "fresh",
+      },
+    ]);
+  });
+
+  it("propagates the persistent-session marker into checkpointed run context", async () => {
+    const { graph } = preparePipeline(`
+      digraph PersistentMarker {
+        graph [goal="persistent marker", default_fidelity="compact"]
+        start [shape=Mdiamond]
+        exit [shape=Msquare]
+        a [prompt="Do A"]
+        start -> a -> exit
+      }
+    `);
+
+    const runner = new PipelineRunner({
+      runId: "run-marker",
+      logsRoot: tmpDir,
+      sessionAccessMode: "fresh",
+      backend: {
+        async run(_node, _prompt, backendContext) {
+          backendContext.set("internal.current_backend_execution_ref", "node-a");
+          backendContext.set("internal.last_completed_backend_execution_ref", "node-a");
+          backendContext.set(BACKEND_SESSION_PERSISTENCE_CONTEXT_KEY, "pi_manifest_v1");
+          return "done";
+        },
+      },
+    });
+
+    const result = await runner.run(graph);
+    const checkpoint = Checkpoint.load(tmpDir);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(result.context.getString(BACKEND_SESSION_PERSISTENCE_CONTEXT_KEY)).toBe(
+      "pi_manifest_v1",
+    );
+    expect(checkpoint.contextValues[BACKEND_SESSION_PERSISTENCE_CONTEXT_KEY]).toBe(
+      "pi_manifest_v1",
+    );
+  });
+
+  it("skips first-node post-resume degradation only when durable full-fidelity reopen is supported", async () => {
+    const { graph } = preparePipeline(`
+      digraph DurableResume {
+        graph [goal="durable resume", default_fidelity="full"]
+        start [shape=Mdiamond]
+        exit [shape=Msquare]
+        a [prompt="Do A"]
+        b [prompt="Do B"]
+        start -> a -> b -> exit
+      }
+    `);
+
+    const checkpoint = new Checkpoint({
+      currentNode: "a",
+      completedNodes: ["a"],
+      nodeOutcomes: {
+        a: { status: StageStatus.SUCCESS },
+      },
+      context: {
+        foo: "bar",
+      },
+    });
+    checkpoint.save(tmpDir);
+
+    let degradedPrompt = "";
+    const degradedRunner = new PipelineRunner({
+      runId: "run-resume-degraded",
+      logsRoot: tmpDir,
+      resumeFrom: tmpDir,
+      sessionAccessMode: "resume_strict",
+      backend: {
+        async run(_node, prompt) {
+          degradedPrompt = prompt;
+          return "done";
+        },
+      },
+    });
+    await degradedRunner.run(graph);
+
+    checkpoint.save(tmpDir);
+
+    let durablePrompt = "";
+    const durableRunner = new PipelineRunner({
+      runId: "run-resume-durable",
+      logsRoot: tmpDir,
+      resumeFrom: tmpDir,
+      sessionAccessMode: "resume_strict",
+      backend: {
+        async run(_node, prompt) {
+          durablePrompt = prompt;
+          return "done";
+        },
+        getCapabilities: () => ({
+          durableFullFidelityResume: true,
+        }),
+      },
+    });
+    await durableRunner.run(graph);
+
+    expect(degradedPrompt).toContain("foo");
+    expect(durablePrompt).toBe("Do B");
   });
 });
