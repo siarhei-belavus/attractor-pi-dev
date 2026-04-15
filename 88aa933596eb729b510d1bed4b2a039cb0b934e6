@@ -1,0 +1,206 @@
+packages/attractor-core/src/handlers/shared/structured-evaluator.ts
+  d32fe41c6c57bdb1 8,10-13,39,58,68-69
+packages/attractor-core/tests/custom-handlers.test.ts
+  d32fe41c6c57bdb1 8,57-62,87,117,144,173
+packages/attractor-core/src/backend/contracts.ts
+  d32fe41c6c57bdb1 1,6-36,54,61,77
+packages/attractor-core/src/steering/queue.ts
+  d32fe41c6c57bdb1 1,20
+packages/attractor-core/tests/integration.test.ts
+  d32fe41c6c57bdb1 15,2587-2725
+packages/attractor-core/src/server/index.ts
+  d32fe41c6c57bdb1 8,212-218,248-250,373-376,424,519,531-532,579-582,607,619-620,646
+packages/attractor-core/src/handlers/types.ts
+  d32fe41c6c57bdb1 6,15,21-26
+packages/attractor-core/src/handlers/governance.ts
+  d32fe41c6c57bdb1 6,31,54-57,65,109,136-138,147
+packages/backend-pi-dev/tests/manager-observer.test.ts
+  d32fe41c6c57bdb1 5,7,12-18,22,38,50,52,64,76,93,107,148,169,188,210,213,222-264,273
+packages/attractor-cli/tests/debug-agent.test.ts
+  d32fe41c6c57bdb1 2,143-219
+packages/attractor-core/src/handlers/handlers.ts
+  d32fe41c6c57bdb1 19,36-39,83,128-131,729,762-765
+packages/attractor-cli/src/index.ts
+  d32fe41c6c57bdb1 99,157,161-165,254-256
+packages/attractor-core/tests/server.test.ts
+  d32fe41c6c57bdb1 523-567,760,765-803,970
+packages/attractor-cli/src/test-harness.ts
+  d32fe41c6c57bdb1 84,87,93
+packages/attractor-core/src/handlers/shared/backend-runtime-context.ts
+  d32fe41c6c57bdb1 1-26
+packages/backend-pi-dev/src/backend.ts
+  d32fe41c6c57bdb1 6,16-17,31,58-61,74,151-152,172,203,208-212,216-220,223-227,230,240,249-250,257-258,262,336-337,340-632,648,656-660,666,690,756-759,773-776,837,848-853,855,872-873,875
+packages/attractor-core/src/engine/runner.ts
+  d32fe41c6c57bdb1 4-9,65,127,136-149,202-208,386,691-697,1099,1108-1112
+packages/backend-pi-dev/src/persistent-session-store.ts
+  d32fe41c6c57bdb1 1-250
+packages/backend-pi-dev/src/session.ts
+  d32fe41c6c57bdb1 121-124,168-169,191-192,283,291
+packages/backend-pi-dev/tests/persistent-session-store.test.ts
+  d32fe41c6c57bdb1 1-287
+packages/backend-pi-dev/tests/extensions-integration.test.ts
+  d32fe41c6c57bdb1 72,117-122,128,130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "development:1.2.2",
+  "base_commit_sha": "88aa933596eb729b510d1bed4b2a039cb0b934e6",
+  "prompts": {
+    "11f1888d77aa2369": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "eebfc82c-58c5-4bff-b7e0-7982158f16c0",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 53,
+      "total_deletions": 1,
+      "accepted_lines": 52,
+      "overriden_lines": 0
+    },
+    "36691727288352ad": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "d97cd356-7468-4d1a-8cec-0ea086e3e8f2",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 511,
+      "total_deletions": 72,
+      "accepted_lines": 439,
+      "overriden_lines": 0
+    },
+    "66fe6b6ff8e81677": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "188223ae-e1ea-4da0-988c-16839759a585",
+        "model": "zai/glm-5.1"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "6735d6641e0a0623": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "55594558-f048-4709-9207-1cc6e78a82a8",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 344,
+      "total_deletions": 38,
+      "accepted_lines": 289,
+      "overriden_lines": 0
+    },
+    "6df605ec161cc0e3": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "c6f81f48-7cb2-44d9-8124-c8b3a051caba",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 19,
+      "total_deletions": 7,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    },
+    "6f18e687a9fc61fc": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "0804d28b-8c2a-4b8e-8119-b90206d0bbe8",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 896,
+      "total_deletions": 63,
+      "accepted_lines": 833,
+      "overriden_lines": 0
+    },
+    "8ff95a3ce3de960a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "e345467c-527e-4978-aecc-57010e36909c",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 27,
+      "total_deletions": 3,
+      "accepted_lines": 27,
+      "overriden_lines": 0
+    },
+    "cdce245fca32d608": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "d9521d81-0bd3-4425-8b02-e19f5b463809",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 74,
+      "total_deletions": 2,
+      "accepted_lines": 72,
+      "overriden_lines": 0
+    },
+    "d0bafd69e9bc6a6b": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "6d2cc2e4-6c09-4bad-b34e-3219e84f180f",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 235,
+      "total_deletions": 9,
+      "accepted_lines": 230,
+      "overriden_lines": 0
+    },
+    "d32fe41c6c57bdb1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "c26d6439-8d7d-4983-b106-541099916dd8",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 1576,
+      "total_deletions": 216,
+      "accepted_lines": 1508,
+      "overriden_lines": 0
+    },
+    "e8c419e1af1765b0": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "8eed251d-5186-46a5-a8c9-253ef8e3c931",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 59,
+      "total_deletions": 0,
+      "accepted_lines": 52,
+      "overriden_lines": 0
+    },
+    "eba7ac36f2ed4335": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "536b1681-9a47-48e8-b3bb-3b0910fedf17",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 67,
+      "total_deletions": 46,
+      "accepted_lines": 29,
+      "overriden_lines": 0
+    }
+  }
+}
