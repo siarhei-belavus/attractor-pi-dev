@@ -62,14 +62,68 @@ describe("extensions integration", () => {
 
     await session.initialize();
 
-    expect(session.getActiveToolNames()).toContain("allowlisted_tool");
     expect(session.getActiveToolNames()).not.toContain("discovered_tool");
     expect(session.session?.getAllTools().map((tool) => tool.name)).toContain(
       "allowlisted_tool",
     );
+    expect(session.session?.getAllTools().map((tool) => tool.name)).not.toContain(
+      "discovered_tool",
+    );
 
     await session.dispose();
   }, 20000);
+
+  it("fails fast with actionable provider/model resolution errors before submit", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "backend-pi-missing-model-"));
+    tempDirs.push(cwd);
+
+    const snapshots: Array<{ phase: string }> = [];
+
+    const backend = new PiAgentCodergenBackend({
+      cwd,
+      debugSink: {
+        writeEvent() {},
+        writeSnapshot(snapshot) {
+          snapshots.push({ phase: snapshot.phase });
+        },
+      },
+    });
+
+    const result = await backend.run(
+      {
+        id: "plan",
+        classes: [],
+        attrs: {},
+        llmProvider: "openai-codex",
+        llmModel: "missing-model-for-registry-skew-test",
+      } as any,
+      "hello",
+      new Context(),
+      {
+        runId: "run-missing-model",
+        logsRoot: cwd,
+        sessionRoot: join(cwd, "sessions"),
+        sessionAccessMode: "fresh",
+      },
+    );
+
+    expect(typeof result).not.toBe("string");
+    expect(result).toMatchObject({ status: "fail" });
+    expect(String((result as { failureReason?: string }).failureReason)).toContain(
+      "Persistent session setup failed:",
+    );
+    expect(String((result as { failureReason?: string }).failureReason)).toContain(
+      'provider="openai-codex"',
+    );
+    expect(String((result as { failureReason?: string }).failureReason)).toContain(
+      'model="missing-model-for-registry-skew-test"',
+    );
+    expect(String((result as { failureReason?: string }).failureReason)).not.toContain(
+      "contextWindow",
+    );
+    expect(snapshots).toHaveLength(0);
+    await backend.dispose();
+  });
 
   it("emits a non-blank debug snapshot when initialization fails", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "backend-pi-fail-"));
@@ -111,6 +165,7 @@ describe("extensions integration", () => {
       {
         id: "plan",
         classes: [],
+        attrs: {},
       } as any,
       "hello",
       new Context(),

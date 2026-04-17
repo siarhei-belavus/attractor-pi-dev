@@ -27,6 +27,7 @@ export type {
   SessionConfig,
   SessionEvent,
   SessionEventKind,
+  SessionBootstrap,
   SessionEventListener,
   SessionOptions,
   SessionRuntimeSnapshot,
@@ -45,7 +46,7 @@ export type {
 } from "./provider-profile.js";
 
 // Execution Environment
-export { LocalExecutionEnvironment } from "./execution-env.js";
+export { FixedCwdExecutionEnvironment, LocalExecutionEnvironment } from "./execution-env.js";
 export type {
   ExecutionEnvironment,
   ExecResult,
@@ -84,6 +85,18 @@ export type {
 } from "./extension-resource-policy.js";
 export { applyProviderToolActivationPolicy } from "./tool-activation-policy.js";
 export type { ToolPolicyResult } from "./tool-activation-policy.js";
+export {
+  createDefaultBackendBootstrap,
+  loadBackendBootstrapFromSnapshot,
+  resolveCurrentBackendBootstrap,
+} from "./backend-setup.js";
+export type {
+  BackendSetupBuilder,
+  BackendSetupCallback,
+  BackendSetupContext,
+  BackendSetupSnapshot,
+  ResolvedBackendBootstrap,
+} from "./backend-setup.js";
 export {
   buildFullSystemPrompt,
   discoverProjectDocs,

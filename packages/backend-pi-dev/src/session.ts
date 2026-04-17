@@ -15,6 +15,7 @@ import {
   SessionManager,
   type AgentSession,
   type AgentSessionEvent,
+  type ResourceLoader,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 import type { ProviderProfile } from "./provider-profile.js";
@@ -24,6 +25,11 @@ import { detectLoop } from "./loop-detection.js";
 import { truncateToolOutput } from "./truncation.js";
 import type { PiResourcePolicy } from "./extension-resource-policy.js";
 import { applyProviderToolActivationPolicy } from "./tool-activation-policy.js";
+import type {
+  BackendSetupBuilder,
+  BackendSetupCallback,
+  BackendSetupContext,
+} from "./backend-setup.js";
 
 // ─── Session State Machine ───────────────────────────────────────────────────
 
@@ -101,6 +107,13 @@ export type SessionEventListener = (event: SessionEvent) => void;
 
 // ─── Session ─────────────────────────────────────────────────────────────────
 
+export interface SessionBootstrap {
+  resolvedCwd: string;
+  mode: "create" | "reopen";
+  setupContext: Omit<BackendSetupContext, "cwd" | "mode">;
+  setupCallback?: BackendSetupCallback | null;
+}
+
 export interface SessionOptions {
   profile: ProviderProfile;
   executionEnv?: ExecutionEnvironment;
@@ -122,6 +135,8 @@ export interface SessionOptions {
   sessionManager?: SessionManager;
   /** Hook invoked after the underlying AgentSession is ready */
   onInitialized?: (sessionManager: SessionManager) => void | Promise<void>;
+  /** Backend-prepared bootstrap inputs for setup callbacks and cwd overrides */
+  bootstrap?: SessionBootstrap;
 }
 
 export interface SessionRuntimeSnapshot {
@@ -167,6 +182,7 @@ export class Session {
   private onWarning?: (message: string) => void;
   private sessionManager: SessionManager;
   private onInitialized?: (sessionManager: SessionManager) => void | Promise<void>;
+  private bootstrap?: SessionBootstrap;
   private toolPolicyDiagnostics: string[] = [];
   private preparedSystemPrompt?: string;
   private projectedActiveToolNames: string[] = [];
@@ -174,6 +190,7 @@ export class Session {
   private rawToolOutputs = new Map<string, string>();
   /** Set when turn/round limits are hit, checked by tool wrappers */
   private _shouldStop = false;
+  private completedTurnAssistantText = "";
   private terminalOutcome: "success" | "fail" | null = null;
   private failureReason: string | null = null;
   private lastActivityAt: number | null = null;
@@ -190,8 +207,9 @@ export class Session {
     this.onWarning = opts.onWarning;
     this.sessionManager = opts.sessionManager ?? SessionManager.inMemory();
     this.onInitialized = opts.onInitialized;
-    this.authStorage = opts.authStorage ?? new AuthStorage();
-    this.modelRegistry = opts.modelRegistry ?? new ModelRegistry(this.authStorage);
+    this.bootstrap = opts.bootstrap;
+    this.authStorage = opts.authStorage ?? AuthStorage.create();
+    this.modelRegistry = opts.modelRegistry ?? ModelRegistry.create(this.authStorage);
   }
 
   get state(): SessionState {
@@ -249,7 +267,7 @@ export class Session {
       await this.executionEnv.initialize();
     }
 
-    const cwd = this.executionEnv?.workingDirectory() ?? process.cwd();
+    const cwd = this.bootstrap?.resolvedCwd ?? this.executionEnv?.workingDirectory() ?? process.cwd();
 
     // Discover project docs (AGENTS.md, CLAUDE.md, etc.)
     const contextFiles = await discoverProjectDocs(cwd, this.profile.projectDocPatterns);
@@ -264,15 +282,36 @@ export class Session {
       contextFiles,
     });
     this.preparedSystemPrompt = systemPrompt;
-    this.projectProjectedToolState(this.profile.toolNames);
 
-    const resourceLoader = new DefaultResourceLoader({
-      cwd,
-      additionalExtensionPaths: this.resourcePolicy?.allowlist ?? [],
-      noExtensions: this.resourcePolicy?.discovery === "none",
-      systemPrompt,
-    });
+    let requestedActiveTools = [...this.profile.toolNames];
+    this.projectProjectedToolState(requestedActiveTools);
+
+    const defaultResourceLoader = this.createDefaultResourceLoader(cwd, systemPrompt);
+    let resourceLoader: ResourceLoader = defaultResourceLoader;
     await resourceLoader.reload();
+
+    if (this.bootstrap?.setupCallback) {
+      const builder: BackendSetupBuilder = {
+        setResourceLoader: (loader) => {
+          resourceLoader = loader;
+        },
+        setInitialActiveTools: (names) => {
+          requestedActiveTools = [...names];
+        },
+      };
+      await this.bootstrap.setupCallback(
+        {
+          ...this.bootstrap.setupContext,
+          cwd,
+          mode: this.bootstrap.mode,
+        },
+        builder,
+      );
+      if (resourceLoader !== defaultResourceLoader) {
+        await resourceLoader.reload();
+      }
+      this.projectProjectedToolState(requestedActiveTools);
+    }
 
     const result = await createAgentSession({
       model: this.profile.model,
@@ -287,7 +326,7 @@ export class Session {
 
     this.agentSession = result.session;
     await this.agentSession.bindExtensions({});
-    this.applyToolActivationPolicy();
+    this.applyToolActivationPolicy(requestedActiveTools);
     await this.onInitialized?.(this.sessionManager);
 
     // Subscribe to agent events and re-emit as session events
@@ -381,22 +420,42 @@ export class Session {
     return out;
   }
 
-  private applyToolActivationPolicy(): void {
+  private createDefaultResourceLoader(cwd: string, systemPrompt: string): ResourceLoader {
+    return new DefaultResourceLoader({
+      cwd,
+      additionalExtensionPaths: this.resourcePolicy?.allowlist ?? [],
+      noExtensions: this.resourcePolicy?.discovery === "none",
+      systemPrompt,
+    });
+  }
+
+  private applyToolActivationPolicy(preferredToolNames?: string[]): void {
     if (!this.agentSession) return;
 
     const available = this.agentSession.getAllTools().map((tool) => tool.name);
-    const { activeToolNames, diagnostics } = applyProviderToolActivationPolicy(
+    const availableSet = new Set(available);
+    const diagnostics: string[] = [];
+    const candidateTools = preferredToolNames
+      ? preferredToolNames.filter((toolName) => {
+          if (availableSet.has(toolName)) {
+            return true;
+          }
+          diagnostics.push(`Requested initial tool \"${toolName}\" is unavailable in active registry.`);
+          return false;
+        })
+      : available;
+    const policy = applyProviderToolActivationPolicy(
       this.profile.id,
-      available,
+      candidateTools.length > 0 ? candidateTools : available,
     );
 
-    this.toolPolicyDiagnostics = diagnostics;
-    for (const message of diagnostics) {
+    this.toolPolicyDiagnostics = [...diagnostics, ...policy.diagnostics];
+    for (const message of this.toolPolicyDiagnostics) {
       this.onWarning?.(message);
     }
 
-    this.agentSession.setActiveToolsByName(activeToolNames);
-    this.projectedActiveToolNames = [...activeToolNames];
+    this.agentSession.setActiveToolsByName(policy.activeToolNames);
+    this.projectedActiveToolNames = [...policy.activeToolNames];
   }
 
   private projectProjectedToolState(toolNames: string[]): void {
@@ -421,6 +480,7 @@ export class Session {
     this.setState(SessionState.PROCESSING);
     this.roundCount = 0;
     this._shouldStop = false;
+    this.completedTurnAssistantText = "";
     this.terminalOutcome = null;
     this.failureReason = null;
     this.emit("user_input", { content: input });
@@ -457,7 +517,7 @@ export class Session {
     }
 
     // Detect if the assistant is asking a question (Gap 5: AWAITING_INPUT)
-    const lastText = this.getLastAssistantText()?.trim();
+    const lastText = this.completedTurnAssistantText.trim();
     if (lastText && looksLikeQuestion(lastText)) {
       this.setState(SessionState.AWAITING_INPUT);
       this.terminalOutcome = null;
@@ -519,9 +579,9 @@ export class Session {
     this.setState(SessionState.CLOSED);
   }
 
-  /** Get the last assistant text response. */
+  /** Get the finalized assistant text captured for the just-completed submit. */
   getLastAssistantText(): string | undefined {
-    return this.agentSession?.getLastAssistantText();
+    return this.completedTurnAssistantText || undefined;
   }
 
   /** Get conversation history. */
@@ -548,7 +608,7 @@ export class Session {
     return {
       state: this._state,
       awaitingInput: this._state === SessionState.AWAITING_INPUT,
-      lastAssistantText: this.getLastAssistantText() ?? "",
+      lastAssistantText: this.completedTurnAssistantText,
       messageCount: this.getMessages().length,
       activeTools: this.getActiveToolNames(),
       toolPolicyDiagnostics: this.getToolPolicyDiagnostics(),
@@ -638,7 +698,11 @@ export class Session {
           const textParts = event.message.content
             .filter((c): c is { type: "text"; text: string } => c.type === "text")
             .map((c) => c.text);
-          this.emit("assistant_text_end", { text: textParts.join("") });
+          const text = textParts.join("");
+          if (text) {
+            this.completedTurnAssistantText = text;
+          }
+          this.emit("assistant_text_end", { text });
         }
         break;
 

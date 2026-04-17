@@ -22,7 +22,9 @@ attractor run <file.dot> [options]
 |-----------------------|-------------|
 | `--simulate`          | Run in simulation mode (no LLM calls). Stages return canned responses. |
 | `--auto-approve`      | Auto-approve `wait.human` gates only (selects the first option). Fails on `human.interview`. |
-| `--logs-dir <path>`   | Output directory for logs and checkpoints. Default: `.attractor-runs/<timestamp>`. |
+| `--logs-dir <path>`   | Output directory for logs and checkpoints. Default: `.attractor-runs/<timestamp>`, or the `--resume-from` directory when resuming without an override. |
+| `--resume-from <path>` | Resume from an existing run directory. Default behavior is same-run continuation; pair with a different `--logs-dir` only when you want an explicit fork/new run. |
+| `--force`             | Recreate persistent backend sessions under the same canonical refs while resuming. Changes reopen strictness only; it does not choose a new logs root by itself. |
 | `--provider <name>`   | LLM provider. Default: packaged pi settings, else `anthropic`. |
 | `--model <id>`        | LLM model ID. Default: packaged pi settings, else `claude-sonnet-4-5-20250929`. |
 | `--debug-agent`       | When supported by the configured backend, write redacted debug telemetry into node and thread debug artifacts. |
@@ -133,7 +135,7 @@ attractor serve [options]
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/pipelines` | Start a pipeline. JSON body: `{ "dotSource": "..." }`. |
+| `POST` | `/pipelines` | Start a pipeline. JSON body: `{ "dotSource": "...", "workflow_base_dir": "/abs/path/to/workflow" }`. `workflow_base_dir` is required for string/API workflows that use `${workflow_base_dir}` in `backend_setup` or `cwd`. |
 | `GET`  | `/pipelines/{id}` | Get run status. |
 | `POST` | `/pipelines/{id}/steer` | Queue a manager-loop steering message. JSON body: `{ "message": "..." }`. |
 | `POST` | `/pipelines/{id}/questions/{qid}/answer` | Submit a human prompt answer map. JSON body: `{ "answers": { "<key>": { "value": "..." } } }`. |
@@ -159,6 +161,7 @@ attractor answer \
 ```
 
 After storing answers, resume the pipeline with `attractor run <file.dot> --resume-from <run-dir>`.
+By default that continues inside the same `<run-dir>`. Supply a different `--logs-dir` only when you want to fork into a new run directory while reusing the old checkpoint as input.
 
 ### `attractor steer`
 

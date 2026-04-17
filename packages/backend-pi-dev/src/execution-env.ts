@@ -68,6 +68,71 @@ export interface ExecutionEnvironment {
 
 // ─── LocalExecutionEnvironment ───────────────────────────────────────────────
 
+export class FixedCwdExecutionEnvironment implements ExecutionEnvironment {
+  constructor(
+    private readonly base: ExecutionEnvironment,
+    private readonly cwd: string,
+  ) {}
+
+  readFile(path: string, offset?: number, limit?: number): Promise<string> {
+    return this.base.readFile(resolve(this.cwd, path), offset, limit);
+  }
+
+  writeFile(path: string, content: string): Promise<void> {
+    return this.base.writeFile(resolve(this.cwd, path), content);
+  }
+
+  fileExists(path: string): Promise<boolean> {
+    return this.base.fileExists(resolve(this.cwd, path));
+  }
+
+  listDirectory(path: string, depth?: number): Promise<DirEntry[]> {
+    return this.base.listDirectory(resolve(this.cwd, path), depth);
+  }
+
+  execCommand(
+    command: string,
+    timeoutMs: number,
+    workingDir?: string,
+    envVars?: Record<string, string>,
+  ): Promise<ExecResult> {
+    return this.base.execCommand(
+      command,
+      timeoutMs,
+      workingDir ? resolve(this.cwd, workingDir) : this.cwd,
+      envVars,
+    );
+  }
+
+  grep(pattern: string, path: string, options?: GrepOptions): Promise<string> {
+    return this.base.grep(pattern, resolve(this.cwd, path), options);
+  }
+
+  glob(pattern: string, path?: string): Promise<string[]> {
+    return this.base.glob(pattern, path ? resolve(this.cwd, path) : this.cwd);
+  }
+
+  initialize(): Promise<void> {
+    return this.base.initialize();
+  }
+
+  cleanup(): Promise<void> {
+    return this.base.cleanup();
+  }
+
+  workingDirectory(): string {
+    return this.cwd;
+  }
+
+  platform(): string {
+    return this.base.platform();
+  }
+
+  osVersion(): string {
+    return this.base.osVersion();
+  }
+}
+
 export interface LocalExecutionEnvironmentOptions {
   cwd: string;
   envFilterPolicy?: EnvFilterPolicy;

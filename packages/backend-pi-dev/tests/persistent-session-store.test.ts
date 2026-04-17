@@ -29,6 +29,8 @@ describe("persistent session store", () => {
       sessionRoot: root,
       backendExecutionRef: "shared-thread",
       cwd: process.cwd(),
+      backendSetupPath: "/tmp/workflow/setup.mjs",
+      backendSetupHash: "hash-1",
       mode: "open_or_create",
       provider: "anthropic",
       model: "claude-test",
@@ -45,6 +47,9 @@ describe("persistent session store", () => {
 
     expect(reopened.sessionDir).toBe(created.sessionDir);
     expect(reopened.manifest.sessionPath).toBe(firstManifest.sessionPath);
+    expect(reopened.manifest.cwd).toBe(process.cwd());
+    expect(reopened.manifest.backendSetupPath).toBe("/tmp/workflow/setup.mjs");
+    expect(reopened.manifest.backendSetupHash).toBe("hash-1");
   });
 
   it("isolates distinct canonical backendExecutionRefs into different directories", () => {
@@ -112,6 +117,70 @@ describe("persistent session store", () => {
     ).toThrow(/locked to provider/i);
   });
 
+  it("fails fast on bootstrap snapshot conflicts", () => {
+    const root = makeTempDir("pi-session-store-");
+    const store = new PersistentSessionStore();
+
+    const created = store.resolve({
+      sessionRoot: root,
+      backendExecutionRef: "shared-thread",
+      cwd: process.cwd(),
+      backendSetupPath: "/tmp/workflow/setup-a.mjs",
+      backendSetupHash: "hash-a",
+      mode: "open_or_create",
+      provider: "anthropic",
+      model: "claude-test",
+    });
+    const manifest = store.commitAccess(created);
+    fs.writeFileSync(manifest.sessionPath, "", "utf-8");
+
+    expect(() =>
+      store.resolve({
+        sessionRoot: root,
+        backendExecutionRef: "shared-thread",
+        cwd: path.join(process.cwd(), "other-cwd"),
+        backendSetupPath: "/tmp/workflow/setup-b.mjs",
+        backendSetupHash: "hash-b",
+        mode: "open_or_create",
+      }),
+    ).toThrow(/locked to cwd|locked to backend_setup path|locked to backend_setup hash/i);
+  });
+
+  it("allows recreate to replace bootstrap drift instead of failing fast", () => {
+    const root = makeTempDir("pi-session-store-");
+    const store = new PersistentSessionStore();
+
+    const created = store.resolve({
+      sessionRoot: root,
+      backendExecutionRef: "shared-thread",
+      cwd: process.cwd(),
+      backendSetupPath: "/tmp/workflow/setup-a.mjs",
+      backendSetupHash: "hash-a",
+      mode: "open_or_create",
+      provider: "anthropic",
+      model: "claude-test",
+    });
+    const manifest = store.commitAccess(created);
+    fs.writeFileSync(manifest.sessionPath, "", "utf-8");
+
+    const recreated = store.resolve({
+      sessionRoot: root,
+      backendExecutionRef: "shared-thread",
+      cwd: path.join(process.cwd(), "other-cwd"),
+      backendSetupPath: "/tmp/workflow/setup-b.mjs",
+      backendSetupHash: "hash-b",
+      mode: "recreate",
+      provider: "openai",
+      model: "gpt-test",
+    });
+
+    expect(recreated.manifest.cwd).toBe(path.join(process.cwd(), "other-cwd"));
+    expect(recreated.manifest.provider).toBe("openai");
+    expect(recreated.manifest.model).toBe("gpt-test");
+    expect(recreated.manifest.backendSetupPath).toBe("/tmp/workflow/setup-b.mjs");
+    expect(recreated.manifest.backendSetupHash).toBe("hash-b");
+  });
+
   it("quarantines broken state and recreates in force mode", () => {
     const root = makeTempDir("pi-session-store-");
     const store = new PersistentSessionStore();
@@ -120,6 +189,8 @@ describe("persistent session store", () => {
       sessionRoot: root,
       backendExecutionRef: "shared-thread",
       cwd: process.cwd(),
+      backendSetupPath: "/tmp/workflow/setup-a.mjs",
+      backendSetupHash: "hash-a",
       mode: "open_or_create",
       provider: "anthropic",
       model: "claude-test",
@@ -132,6 +203,8 @@ describe("persistent session store", () => {
       sessionRoot: root,
       backendExecutionRef: "shared-thread",
       cwd: process.cwd(),
+      backendSetupPath: "/tmp/workflow/setup-b.mjs",
+      backendSetupHash: "hash-b",
       mode: "recreate",
       provider: "anthropic",
       model: "claude-test",
@@ -139,6 +212,8 @@ describe("persistent session store", () => {
 
     expect(recreated.sessionDir).toBe(created.sessionDir);
     expect(recreated.manifest.sessionPath).not.toBe(created.manifest.sessionPath);
+    expect(recreated.manifest.backendSetupPath).toBe("/tmp/workflow/setup-b.mjs");
+    expect(recreated.manifest.backendSetupHash).toBe("hash-b");
     expect(
       fs
         .readdirSync(root)
@@ -189,6 +264,30 @@ describe("backend canonical resume policy", () => {
     );
   });
 
+  it("fails fast when cached shared-thread sessions disagree on bootstrap snapshot", () => {
+    const backend = new PiAgentCodergenBackend() as any;
+    backend.sessionMetadata.set("run-1::shared-thread", {
+      provider: "anthropic",
+      modelId: "claude-test",
+      cwd: "/tmp/workspace-a",
+      backendSetupPath: "/tmp/workflow/setup-a.mjs",
+      backendSetupHash: "hash-a",
+    });
+
+    expect(() =>
+      backend.assertCachedSessionConsistency(
+        "run-1::shared-thread",
+        "anthropic",
+        "claude-test",
+        {
+          cwd: "/tmp/workspace-b",
+          backendSetupPath: "/tmp/workflow/setup-b.mjs",
+          backendSetupHash: "hash-b",
+        },
+      ),
+    ).toThrow(/locked to cwd|locked to backend_setup path|locked to backend_setup hash/i);
+  });
+
   it("does not inject backend defaults before attached recreate can consult the manifest", async () => {
     const backend = new PiAgentCodergenBackend() as any;
     const context = new Context();
@@ -208,6 +307,7 @@ describe("backend canonical resume policy", () => {
         logsRoot: "/tmp/run-1",
         sessionRoot: "/tmp/run-1/sessions",
         sessionAccessMode: "resume_force",
+        workflowBaseDir: null,
       },
     );
 
@@ -233,11 +333,13 @@ describe("backend canonical resume policy", () => {
     context.set("internal.last_completed_backend_execution_ref", "shared-thread");
 
     await backend.ensureRunSession({
+      node: { id: "node-a", attrs: {} } as any,
       backendCallContext: {
         runId: "run-1",
         logsRoot: "/tmp/run-1",
         sessionRoot: "/tmp/run-1/sessions",
         sessionAccessMode: "resume_force",
+        workflowBaseDir: null,
       },
       context,
       backendExecutionRef: "shared-thread",
@@ -276,6 +378,7 @@ describe("backend canonical resume policy", () => {
         logsRoot: "/tmp/run-1",
         sessionRoot: "/tmp/run-1/sessions",
         sessionAccessMode: "resume_force",
+        workflowBaseDir: null,
       },
     );
 

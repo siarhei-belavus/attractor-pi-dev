@@ -15,6 +15,7 @@ export interface DurableRunState {
   currentNode: string | null;
   completedNodes: string[];
   pendingQuestionId: string | null;
+  workflowBaseDir: string | null;
   updatedAt: string;
   error?: string;
 }
@@ -45,6 +46,8 @@ export class RunStateStore {
         ? parsed.completedNodes.map((value) => String(value))
         : [],
       pendingQuestionId: parsed.pendingQuestionId ?? null,
+      workflowBaseDir:
+        typeof parsed.workflowBaseDir === "string" ? parsed.workflowBaseDir : null,
       updatedAt: parsed.updatedAt ?? new Date().toISOString(),
       ...(parsed.error ? { error: parsed.error } : {}),
     };

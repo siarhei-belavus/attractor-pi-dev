@@ -8,8 +8,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import type { BackendSetupSnapshot } from "./backend-setup.js";
 
-export interface PersistentSessionManifest {
+export interface PersistentSessionManifest extends BackendSetupSnapshot {
   backendExecutionRef: string;
   provider: string;
   model: string;
@@ -20,10 +21,9 @@ export interface PersistentSessionManifest {
 
 export type PersistentSessionResolutionMode = "open_or_create" | "open_required" | "recreate";
 
-export interface ResolvePersistentSessionInput {
+export interface ResolvePersistentSessionInput extends Partial<BackendSetupSnapshot> {
   sessionRoot: string;
   backendExecutionRef: string;
-  cwd: string;
   mode: PersistentSessionResolutionMode;
   provider?: string;
   model?: string;
@@ -34,6 +34,7 @@ export interface PersistentSessionAccess {
   sessionDir: string;
   sessionManager: SessionManager;
   manifest: PersistentSessionManifest;
+  initializationMode: "create" | "reopen";
 }
 
 const MANIFEST_FILE = "manifest.json";
@@ -61,23 +62,35 @@ export class PersistentSessionStore {
       existingManifest = null;
     }
 
-    if (existingManifest) {
-      this.assertProviderModelConsistency(existingManifest, input.provider, input.model);
-    }
-
     if (input.mode === "recreate" && existsSync(sessionDir)) {
       const provider = input.provider ?? existingManifest?.provider;
       const model = input.model ?? existingManifest?.model;
+      const cwd = input.cwd ?? existingManifest?.cwd;
       if (!provider || !model) {
         throw new Error(
           `Persistent session '${input.backendExecutionRef}' cannot be recreated without provider and model`,
         );
       }
+      if (!cwd) {
+        throw new Error(
+          `Persistent session '${input.backendExecutionRef}' cannot be recreated without cwd`,
+        );
+      }
       this.quarantineSessionDir(sessionDir);
-      return this.createFreshAccess(sessionDir, input.backendExecutionRef, input.cwd, provider, model);
+      return this.createFreshAccess(
+        sessionDir,
+        input.backendExecutionRef,
+        cwd,
+        provider,
+        model,
+        input.backendSetupPath ?? existingManifest?.backendSetupPath ?? null,
+        input.backendSetupHash ?? existingManifest?.backendSetupHash ?? null,
+      );
     }
 
     if (existingManifest) {
+      this.assertProviderModelConsistency(existingManifest, input.provider, input.model);
+      this.assertBootstrapConsistency(existingManifest, input);
       if (!existingManifest.sessionPath || !existsSync(existingManifest.sessionPath)) {
         throw new Error(
           `Persistent session artifact is missing for '${input.backendExecutionRef}' at ${existingManifest.sessionPath}`,
@@ -88,6 +101,7 @@ export class PersistentSessionStore {
         sessionDir,
         sessionManager: SessionManager.open(existingManifest.sessionPath, sessionDir),
         manifest: existingManifest,
+        initializationMode: "reopen",
       };
     }
 
@@ -102,6 +116,11 @@ export class PersistentSessionStore {
         `Persistent session '${input.backendExecutionRef}' cannot be created without provider and model`,
       );
     }
+    if (!input.cwd) {
+      throw new Error(
+        `Persistent session '${input.backendExecutionRef}' cannot be created without cwd`,
+      );
+    }
 
     return this.createFreshAccess(
       sessionDir,
@@ -109,6 +128,8 @@ export class PersistentSessionStore {
       input.cwd,
       input.provider,
       input.model,
+      input.backendSetupPath ?? null,
+      input.backendSetupHash ?? null,
     );
   }
 
@@ -143,6 +164,8 @@ export class PersistentSessionStore {
     cwd: string,
     provider: string,
     model: string,
+    backendSetupPath: string | null,
+    backendSetupHash: string | null,
   ): PersistentSessionAccess {
     const sessionManager = SessionManager.create(cwd, sessionDir);
     const now = new Date().toISOString();
@@ -162,9 +185,13 @@ export class PersistentSessionStore {
         provider,
         model,
         sessionPath,
+        cwd,
+        backendSetupPath,
+        backendSetupHash,
         createdAt: now,
         updatedAt: now,
       },
+      initializationMode: "create",
     };
   }
 
@@ -201,6 +228,9 @@ export class PersistentSessionStore {
     const provider = manifest["provider"];
     const model = manifest["model"];
     const sessionPath = manifest["sessionPath"];
+    const cwd = manifest["cwd"];
+    const backendSetupPath = manifest["backendSetupPath"];
+    const backendSetupHash = manifest["backendSetupHash"];
     const createdAt = manifest["createdAt"];
     const updatedAt = manifest["updatedAt"];
 
@@ -209,6 +239,9 @@ export class PersistentSessionStore {
       typeof provider !== "string" ||
       typeof model !== "string" ||
       typeof sessionPath !== "string" ||
+      typeof cwd !== "string" ||
+      (backendSetupPath !== null && backendSetupPath !== undefined && typeof backendSetupPath !== "string") ||
+      (backendSetupHash !== null && backendSetupHash !== undefined && typeof backendSetupHash !== "string") ||
       typeof createdAt !== "string" ||
       typeof updatedAt !== "string"
     ) {
@@ -220,6 +253,9 @@ export class PersistentSessionStore {
       provider,
       model,
       sessionPath,
+      cwd,
+      backendSetupPath: typeof backendSetupPath === "string" ? backendSetupPath : null,
+      backendSetupHash: typeof backendSetupHash === "string" ? backendSetupHash : null,
       createdAt,
       updatedAt,
     };
@@ -238,6 +274,33 @@ export class PersistentSessionStore {
     if (model && manifest.model !== model) {
       throw new Error(
         `Persistent session '${manifest.backendExecutionRef}' is locked to model '${manifest.model}', not '${model}'`,
+      );
+    }
+  }
+
+  private assertBootstrapConsistency(
+    manifest: PersistentSessionManifest,
+    input: Partial<BackendSetupSnapshot>,
+  ): void {
+    if (input.cwd && manifest.cwd !== input.cwd) {
+      throw new Error(
+        `Persistent session '${manifest.backendExecutionRef}' is locked to cwd '${manifest.cwd}', not '${input.cwd}'`,
+      );
+    }
+    if (
+      input.backendSetupPath !== undefined &&
+      manifest.backendSetupPath !== (input.backendSetupPath ?? null)
+    ) {
+      throw new Error(
+        `Persistent session '${manifest.backendExecutionRef}' is locked to backend_setup path '${manifest.backendSetupPath ?? "<none>"}', not '${input.backendSetupPath ?? "<none>"}'`,
+      );
+    }
+    if (
+      input.backendSetupHash !== undefined &&
+      manifest.backendSetupHash !== (input.backendSetupHash ?? null)
+    ) {
+      throw new Error(
+        `Persistent session '${manifest.backendExecutionRef}' is locked to backend_setup hash '${manifest.backendSetupHash ?? "<none>"}', not '${input.backendSetupHash ?? "<none>"}'`,
       );
     }
   }

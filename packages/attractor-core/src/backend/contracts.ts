@@ -12,12 +12,14 @@ export interface BackendCallContext {
   logsRoot: string;
   sessionRoot: string;
   sessionAccessMode: BackendSessionAccessMode;
+  workflowBaseDir: string | null;
 }
 
 export function createBackendCallContext(input: {
   runId: string;
   logsRoot: string;
   sessionAccessMode: BackendSessionAccessMode;
+  workflowBaseDir?: string | null;
 }): BackendCallContext {
   if (!input.runId) {
     throw new Error("Backend call context is missing runId");
@@ -31,6 +33,7 @@ export function createBackendCallContext(input: {
     logsRoot: input.logsRoot,
     sessionRoot: path.join(input.logsRoot, "sessions"),
     sessionAccessMode: input.sessionAccessMode,
+    workflowBaseDir: input.workflowBaseDir ?? null,
   };
 }
 

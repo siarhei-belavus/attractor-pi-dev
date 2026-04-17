@@ -94,8 +94,8 @@ Commands:
 Options (run):
   --simulate         Run in simulation mode (no LLM calls)
   --auto-approve     Auto-approve all human gates
-  --logs-dir <path>  Output directory for logs (default: .attractor-runs/<timestamp>)
-  --resume-from <path> Resume from an existing run checkpoint directory
+  --logs-dir <path>  Output directory for logs and checkpoints (default: .attractor-runs/<timestamp>, or --resume-from path when resuming)
+  --resume-from <path> Resume from an existing run checkpoint directory (default: continue in that same run unless --logs-dir overrides it)
   --force            Force resume by recreating persistent sessions under canonical refs (requires --resume-from)
   --provider <name>  LLM provider (default: pi settings, else anthropic)
   --model <id>       LLM model ID (default: pi settings, else claude-sonnet-4-5-20250929)
@@ -213,17 +213,21 @@ export async function runCommand(args: string[], deps: CliDeps = defaultDeps) {
   if (simulate) console.log("Mode: simulation");
   console.log("---");
 
-  // Build runner
-  const logsRoot = logsDir ?? path.join(process.cwd(), ".attractor-runs", Date.now().toString());
-  const runId = path.basename(logsRoot);
   const testConfig = loadCliTestConfig();
+  const resumeFrom = resumeFromFlag ?? testConfig?.resumeFrom;
+
+  // Build runner
+  const logsRoot =
+    logsDir ??
+    resumeFrom ??
+    path.join(process.cwd(), ".attractor-runs", Date.now().toString());
+  const runId = path.basename(logsRoot);
   const debugWriter = debugAgent ? createDebugAgentWriter(logsRoot) : null;
   const interviewer =
     createTestInterviewer(testConfig, logsRoot, runId) ??
     (autoApprove
       ? new AutoApproveInterviewer()
       : createCliInterviewer(runId, logsRoot));
-  const resumeFrom = resumeFromFlag ?? testConfig?.resumeFrom;
   const testBackend = createTestBackend(testConfig);
 
   let backend: CodergenBackend | null;

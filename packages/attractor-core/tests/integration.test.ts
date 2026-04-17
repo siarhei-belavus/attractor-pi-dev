@@ -2619,8 +2619,43 @@ describe("Integration: backend call context and durable resume capability", () =
         logsRoot: tmpDir,
         sessionRoot: path.join(tmpDir, "sessions"),
         sessionAccessMode: "fresh",
+        workflowBaseDir: null,
       },
     ]);
+  });
+
+  it("passes prepared workflowBaseDir through the backend call context", async () => {
+    const workflowFile = path.join(tmpDir, "workflow-base", "pipeline.dot");
+    const { graph } = preparePipeline(
+      `
+        digraph BackendCallContextWithBase {
+          graph [goal="backend context"]
+          start [shape=Mdiamond]
+          exit [shape=Msquare]
+          a [prompt="Do A", backend_setup="${"${workflow_base_dir}"}/setup.mjs"]
+          start -> a -> exit
+        }
+      `,
+      { dotFilePath: workflowFile },
+    );
+
+    const seen: unknown[] = [];
+    const runner = new PipelineRunner({
+      runId: "run-ctx-base",
+      logsRoot: tmpDir,
+      sessionAccessMode: "fresh",
+      backend: {
+        async run(_node, _prompt, _context, backendCallContext) {
+          seen.push(backendCallContext.workflowBaseDir);
+          return "done";
+        },
+      },
+    });
+
+    const result = await runner.run(graph);
+
+    expect(result.outcome.status).toBe(StageStatus.SUCCESS);
+    expect(seen).toEqual([path.dirname(workflowFile)]);
   });
 
   it("propagates the persistent-session marker into checkpointed run context", async () => {

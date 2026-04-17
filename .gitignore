@@ -10,3 +10,6 @@ dist/
 tmp/
 .plans/
 .serena/
+.plans/
+.initiatives/
+.issues/

@@ -1,8 +1,9 @@
 import { parseDot } from "../parser/parser.js";
 import { buildGraph } from "../model/builder.js";
 import { applyTransforms, type Transform } from "../transforms/index.js";
-import { validate, validateOrRaise, type Diagnostic } from "../validation/index.js";
+import { validateOrRaise, type Diagnostic } from "../validation/index.js";
 import type { Graph } from "../model/graph.js";
+import { attachWorkflowPathMetadata } from "../workflow-paths.js";
 
 export interface PrepareOptions {
   /** Custom transforms (replaces defaults if provided) */
@@ -11,6 +12,8 @@ export interface PrepareOptions {
   variables?: Record<string, string>;
   /** Absolute path to the DOT file (used for prompt resolution) */
   dotFilePath?: string;
+  /** Explicit workflow base dir for string/API workflows */
+  workflowBaseDir?: string;
 }
 
 export interface PrepareResult {
@@ -39,6 +42,10 @@ export function preparePipeline(
 
   // 3. Apply transforms
   graph = applyTransforms(graph, opts.transforms, opts.variables, opts.dotFilePath);
+  graph = attachWorkflowPathMetadata(graph, {
+    dotFilePath: opts.dotFilePath,
+    workflowBaseDir: opts.workflowBaseDir,
+  });
 
   // 4. Validate
   const diagnostics = validateOrRaise(graph);

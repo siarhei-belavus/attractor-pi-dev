@@ -35,6 +35,7 @@ import {
 import {
   Session,
   SessionState,
+  type SessionBootstrap,
   type SessionConfig,
   type SessionEvent,
   type SessionRuntimeSnapshot,
@@ -46,6 +47,7 @@ import {
   type ProviderProfile,
 } from "./provider-profile.js";
 import {
+  FixedCwdExecutionEnvironment,
   LocalExecutionEnvironment,
   type ExecutionEnvironment,
 } from "./execution-env.js";
@@ -57,8 +59,16 @@ import {
 } from "./extension-resource-policy.js";
 import {
   PersistentSessionStore,
+  type PersistentSessionManifest,
   type PersistentSessionResolutionMode,
 } from "./persistent-session-store.js";
+import {
+  createDefaultBackendBootstrap,
+  loadBackendBootstrapFromSnapshot,
+  resolveCurrentBackendBootstrap,
+  type BackendSetupSnapshot,
+  type ResolvedBackendBootstrap,
+} from "./backend-setup.js";
 
 export interface PiSessionObserverSnapshot {
   childStatus: "running" | "completed" | "failed";
@@ -150,6 +160,11 @@ function loadPiAgentSettingsDefaults(): PiAgentSettingsDefaults {
 
 const CANONICAL_PERSISTENCE_MARKER_VALUE = "pi_manifest_v1";
 
+interface CachedSessionMetadata extends BackendSetupSnapshot {
+  provider: string;
+  modelId: string;
+}
+
 /**
  * CodergenBackend implementation using pi-mono's coding agent,
  * wrapped with spec-compliant Session (state machine, limits, loop detection).
@@ -167,7 +182,7 @@ export class PiAgentCodergenBackend
     >
   > & PiAgentBackendOptions;
   private sessions = new Map<string, Session>();
-  private sessionMetadata = new Map<string, { provider: string; modelId: string }>();
+  private sessionMetadata = new Map<string, CachedSessionMetadata>();
   private childExecutionBindings = new Map<string, SteeringTarget>();
   private persistentSessionStore = new PersistentSessionStore();
   private authStorage: AuthStorage;
@@ -185,8 +200,8 @@ export class PiAgentCodergenBackend
       reuseSessions: opts?.reuseSessions ?? true,
       ...opts,
     };
-    this.authStorage = new AuthStorage();
-    this.modelRegistry = new ModelRegistry(this.authStorage);
+    this.authStorage = AuthStorage.create();
+    this.modelRegistry = ModelRegistry.create(this.authStorage);
     this.executionEnv = opts?.executionEnv;
     const envPolicy = parsePiResourcePolicyFromEnv(process.env, this.warn.bind(this));
     this.resourcePolicy = resolvePiResourcePolicy(
@@ -214,6 +229,7 @@ export class PiAgentCodergenBackend
     let session: Session;
     try {
       session = await this.ensureRunSession({
+        node,
         backendCallContext,
         context,
         backendExecutionRef,
@@ -273,7 +289,7 @@ export class PiAgentCodergenBackend
       };
     }
 
-    const responseText = session.getLastAssistantText() ?? "";
+    const responseText = runtime.lastAssistantText.trim();
     if (!responseText) {
       return {
         status: StageStatus.FAIL,
@@ -290,18 +306,18 @@ export class PiAgentCodergenBackend
     modelId: string,
     thinkingLevel: ThinkingLevel,
     cwd: string,
+    executionEnv?: ExecutionEnvironment,
   ): ProviderProfile {
     if (this.options.createProfile) {
       return this.options.createProfile(provider, cwd);
     }
 
-    const execEnv = this.executionEnv;
     const profileOpts = {
       provider,
       modelId,
       thinkingLevel,
       cwd,
-      executionEnv: execEnv,
+      executionEnv,
     };
 
     switch (provider) {
@@ -352,6 +368,7 @@ export class PiAgentCodergenBackend
     cacheKey: string,
     provider: string,
     modelId: string,
+    snapshot?: BackendSetupSnapshot,
   ): void {
     const metadata = this.sessionMetadata.get(cacheKey);
     if (!metadata) {
@@ -365,6 +382,27 @@ export class PiAgentCodergenBackend
     if (metadata.modelId !== modelId) {
       throw new Error(
         `Persistent session '${cacheKey}' is locked to model '${metadata.modelId}', not '${modelId}'`,
+      );
+    }
+    if (snapshot && metadata.cwd !== snapshot.cwd) {
+      throw new Error(
+        `Persistent session '${cacheKey}' is locked to cwd '${metadata.cwd}', not '${snapshot.cwd}'`,
+      );
+    }
+    if (
+      snapshot &&
+      metadata.backendSetupPath !== snapshot.backendSetupPath
+    ) {
+      throw new Error(
+        `Persistent session '${cacheKey}' is locked to backend_setup path '${metadata.backendSetupPath ?? "<none>"}', not '${snapshot.backendSetupPath ?? "<none>"}'`,
+      );
+    }
+    if (
+      snapshot &&
+      metadata.backendSetupHash !== snapshot.backendSetupHash
+    ) {
+      throw new Error(
+        `Persistent session '${cacheKey}' is locked to backend_setup hash '${metadata.backendSetupHash ?? "<none>"}', not '${snapshot.backendSetupHash ?? "<none>"}'`,
       );
     }
   }
@@ -441,28 +479,55 @@ export class PiAgentCodergenBackend
     return fallback;
   }
 
-  private createSession(
-    cacheKey: string,
-    profile: ProviderProfile,
-    sessionManager: SessionManager,
-    onInitialized: (sessionManager: SessionManager) => Promise<void>,
-  ): Session {
-    const execEnv = this.executionEnv ?? new LocalExecutionEnvironment({ cwd: this.options.cwd });
+  private createExecutionEnvironment(cwd: string): ExecutionEnvironment {
+    if (this.executionEnv) {
+      return new FixedCwdExecutionEnvironment(this.executionEnv, cwd);
+    }
+    return new LocalExecutionEnvironment({ cwd });
+  }
+
+  private toCachedSessionMetadata(manifest: PersistentSessionManifest): CachedSessionMetadata {
+    return {
+      provider: manifest.provider,
+      modelId: manifest.model,
+      cwd: manifest.cwd,
+      backendSetupPath: manifest.backendSetupPath,
+      backendSetupHash: manifest.backendSetupHash,
+    };
+  }
+
+  private manifestSnapshot(manifest: PersistentSessionManifest): BackendSetupSnapshot {
+    return {
+      cwd: manifest.cwd,
+      backendSetupPath: manifest.backendSetupPath,
+      backendSetupHash: manifest.backendSetupHash,
+    };
+  }
+
+  private createSession(args: {
+    cacheKey: string;
+    profile: ProviderProfile;
+    executionEnv: ExecutionEnvironment;
+    sessionManager: SessionManager;
+    onInitialized: (sessionManager: SessionManager) => Promise<void>;
+    bootstrap: SessionBootstrap;
+  }): Session {
     const session = new Session({
-      profile,
-      executionEnv: execEnv,
+      profile: args.profile,
+      executionEnv: args.executionEnv,
       config: this.options.sessionConfig,
       resourcePolicy: this.resourcePolicy,
       authStorage: this.authStorage,
       modelRegistry: this.modelRegistry,
       onWarning: this.warn.bind(this),
-      sessionManager,
-      onInitialized,
+      sessionManager: args.sessionManager,
+      onInitialized: args.onInitialized,
+      bootstrap: args.bootstrap,
     });
 
     if (this.options.debugSink) {
       session.subscribe((event) => {
-        this.options.debugSink?.writeEvent(this.mapDebugEvent(cacheKey, event));
+        this.options.debugSink?.writeEvent(this.mapDebugEvent(args.cacheKey, event));
       });
     }
 
@@ -473,40 +538,64 @@ export class PiAgentCodergenBackend
     cacheKey: string;
     backendCallContext: BackendCallContext;
     backendExecutionRef: string;
+    nodeId?: string;
     provider?: string;
     modelId?: string;
     thinkingLevel: ThinkingLevel;
     mode: PersistentSessionResolutionMode;
+    bootstrap?: ResolvedBackendBootstrap;
   }): Promise<Session> {
     const access = this.persistentSessionStore.resolve({
       sessionRoot: args.backendCallContext.sessionRoot,
       backendExecutionRef: args.backendExecutionRef,
-      cwd: this.options.cwd,
       mode: args.mode,
       ...(args.provider ? { provider: args.provider } : {}),
       ...(args.modelId ? { model: args.modelId } : {}),
+      ...(args.bootstrap ? args.bootstrap.snapshot : {}),
     });
+    const bootstrap =
+      args.bootstrap ??
+      (await loadBackendBootstrapFromSnapshot({
+        snapshot: this.manifestSnapshot(access.manifest),
+        backendExecutionRef: args.backendExecutionRef,
+        runRoot: args.backendCallContext.logsRoot,
+        workflowBaseDir: args.backendCallContext.workflowBaseDir,
+      }));
+    const executionEnv = this.createExecutionEnvironment(bootstrap.snapshot.cwd);
     const profile = this.resolveProfile(
       access.manifest.provider,
       access.manifest.model,
       args.thinkingLevel,
-      this.options.cwd,
+      bootstrap.snapshot.cwd,
+      executionEnv,
     );
-    const session = this.createSession(
-      args.cacheKey,
+    const session = this.createSession({
+      cacheKey: args.cacheKey,
       profile,
-      access.sessionManager,
-      async (sessionManager) => {
+      executionEnv,
+      sessionManager: access.sessionManager,
+      onInitialized: async (sessionManager) => {
         const manifest = this.persistentSessionStore.commitAccess({
           ...access,
           sessionManager,
         });
-        this.sessionMetadata.set(args.cacheKey, {
-          provider: manifest.provider,
-          modelId: manifest.model,
-        });
+        this.sessionMetadata.set(args.cacheKey, this.toCachedSessionMetadata(manifest));
       },
-    );
+      bootstrap: {
+        resolvedCwd: bootstrap.snapshot.cwd,
+        mode: access.initializationMode,
+        setupContext: {
+          nodeId: args.nodeId ?? args.backendExecutionRef,
+          backendExecutionRef: args.backendExecutionRef,
+          workflowBaseDir: bootstrap.workflowBaseDir,
+          runRoot: args.backendCallContext.logsRoot,
+          backendStateRoot: bootstrap.backendStateRoot,
+          originalSetupRef: bootstrap.originalSetupRef,
+          resolvedSetupPath: bootstrap.resolvedSetupPath,
+        },
+        setupCallback: bootstrap.setupCallback,
+      },
+    });
     try {
       await session.initialize();
     } catch (error) {
@@ -520,14 +609,12 @@ export class PiAgentCodergenBackend
       throw error;
     }
     this.sessions.set(args.cacheKey, session);
-    this.sessionMetadata.set(args.cacheKey, {
-      provider: access.manifest.provider,
-      modelId: access.manifest.model,
-    });
+    this.sessionMetadata.set(args.cacheKey, this.toCachedSessionMetadata(access.manifest));
     return session;
   }
 
   private async ensureRunSession(args: {
+    node: GraphNode;
     backendCallContext: BackendCallContext;
     context: Context;
     backendExecutionRef: string;
@@ -541,9 +628,20 @@ export class PiAgentCodergenBackend
       args.backendExecutionRef,
       args.backendCallContext.sessionAccessMode,
     );
+    const bootstrap = await resolveCurrentBackendBootstrap({
+      node: args.node,
+      backendExecutionRef: args.backendExecutionRef,
+      backendCallContext: args.backendCallContext,
+      defaultCwd: this.options.cwd,
+    });
     const cached = this.sessions.get(args.cacheKey);
     if (cached && mode !== "recreate") {
-      this.assertCachedSessionConsistency(args.cacheKey, args.provider, args.modelId);
+      this.assertCachedSessionConsistency(
+        args.cacheKey,
+        args.provider,
+        args.modelId,
+        bootstrap.snapshot,
+      );
       cached.setReasoningEffort(args.thinkingLevel);
       return cached;
     }
@@ -555,10 +653,12 @@ export class PiAgentCodergenBackend
       cacheKey: args.cacheKey,
       backendCallContext: args.backendCallContext,
       backendExecutionRef: args.backendExecutionRef,
+      nodeId: args.node.id,
       provider: args.provider,
       modelId: args.modelId,
       thinkingLevel: args.thinkingLevel,
       mode,
+      bootstrap,
     });
   }
 
@@ -585,16 +685,17 @@ export class PiAgentCodergenBackend
     if (cached && mode !== "recreate") {
       return { cacheKey, session: cached };
     }
+    const metadata = this.sessionMetadata.get(cacheKey);
     if (cached) {
       await this.disposeCachedSession(cacheKey);
     }
 
-    const metadata = this.sessionMetadata.get(cacheKey);
     try {
       const session = await this.createPersistentSession({
         cacheKey,
         backendCallContext,
         backendExecutionRef: target.backendExecutionRef,
+        nodeId: target.nodeId,
         ...(metadata?.provider ? { provider: metadata.provider } : {}),
         ...(metadata?.modelId ? { modelId: metadata.modelId } : {}),
         thinkingLevel: this.options.defaultThinkingLevel,
@@ -602,11 +703,16 @@ export class PiAgentCodergenBackend
       });
       return { cacheKey, session };
     } catch (error) {
+      const message = String(error);
+      const missingProviderModel = message.includes(
+        "cannot be recreated without provider and model",
+      );
+      const missingCwd = message.includes("cannot be recreated without cwd");
       if (
         mode !== "recreate" ||
         metadata?.provider ||
         metadata?.modelId ||
-        !String(error).includes("cannot be recreated without provider and model")
+        (!missingProviderModel && !missingCwd)
       ) {
         throw error;
       }
@@ -615,10 +721,17 @@ export class PiAgentCodergenBackend
         cacheKey,
         backendCallContext,
         backendExecutionRef: target.backendExecutionRef,
+        nodeId: target.nodeId,
         provider: this.options.defaultProvider,
         modelId: this.options.defaultModel,
         thinkingLevel: this.options.defaultThinkingLevel,
         mode,
+        bootstrap: createDefaultBackendBootstrap({
+          backendExecutionRef: target.backendExecutionRef,
+          runRoot: backendCallContext.logsRoot,
+          defaultCwd: this.options.cwd,
+          workflowBaseDir: backendCallContext.workflowBaseDir,
+        }),
       });
       return { cacheKey, session };
     }

@@ -20,9 +20,9 @@
   },
   "dependencies": {
     "@attractor/core": "workspace:*",
-    "@mariozechner/pi-agent-core": "^0.52.9",
-    "@mariozechner/pi-ai": "^0.52.9",
-    "@mariozechner/pi-coding-agent": "^0.52.9",
+    "@mariozechner/pi-agent-core": "^0.67.3",
+    "@mariozechner/pi-ai": "^0.67.3",
+    "@mariozechner/pi-coding-agent": "^0.67.3",
     "@sinclair/typebox": "^0.34.0",
     "glob": "^10.0.0"
   },

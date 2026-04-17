@@ -16,6 +16,7 @@ import { applyOutcomeRuntimeContext } from "../state/outcome-runtime.js";
 import { resolveEffectiveFidelity, resolveThreadKey } from "../state/fidelity.js";
 import { EventEmitter, type PipelineEvent } from "../events/index.js";
 import { HandlerRegistry } from "../handlers/registry.js";
+import { getPreparedWorkflowBaseDir } from "../workflow-paths.js";
 import type {
   CodergenBackend,
   Interviewer,
@@ -124,7 +125,7 @@ export class PipelineRunner {
             return new AttachedExecutionManagerObserver(
               supervisor,
               input.childExecution.attachedTarget,
-              (context) => this.createCallContext(context, input.logsRoot),
+              (context) => this.createCallContext(context, input.logsRoot, input.graph),
             );
           }
         }
@@ -133,7 +134,11 @@ export class PipelineRunner {
     }
   }
 
-  private createCallContext(context: Context, logsRoot: string): BackendCallContext {
+  private createCallContext(
+    context: Context,
+    logsRoot: string,
+    graph?: Graph,
+  ): BackendCallContext {
     const runId = context.getString("internal.run_id") || this.config.runId || path.basename(logsRoot);
     const sessionAccessMode =
       this.config.sessionAccessMode ?? (this.config.resumeFrom ? "resume_strict" : "fresh");
@@ -141,6 +146,7 @@ export class PipelineRunner {
       runId,
       logsRoot,
       sessionAccessMode,
+      workflowBaseDir: graph ? getPreparedWorkflowBaseDir(graph) : null,
     });
   }
 
@@ -204,7 +210,7 @@ export class PipelineRunner {
           context,
           graph,
           logsRoot,
-          this.createCallContext(context, logsRoot),
+          this.createCallContext(context, logsRoot, graph),
         );
       } catch (err) {
         return failOutcome(String(err));
@@ -293,6 +299,10 @@ export class PipelineRunner {
     // Mirror graph attributes into context
     context.set("graph.goal", graph.attrs.goal);
     context.set("internal.run_id", runId);
+    const workflowBaseDir = getPreparedWorkflowBaseDir(graph);
+    if (workflowBaseDir) {
+      context.set("internal.workflow_base_dir", workflowBaseDir);
+    }
 
     const startTime = Date.now();
     this.emitter.emit({
@@ -693,7 +703,7 @@ export class PipelineRunner {
           context,
           graph,
           logsRoot,
-          this.createCallContext(context, logsRoot),
+          this.createCallContext(context, logsRoot, graph),
         );
 
         if (

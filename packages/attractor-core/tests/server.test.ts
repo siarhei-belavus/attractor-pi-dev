@@ -5,6 +5,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { createServer, type HttpPipelineServer, type ServerConfig } from "../src/server/index.js";
 import { InMemorySteeringQueue } from "../src/steering/queue.js";
+import { StageStatus } from "../src/state/types.js";
 
 /** Simple pipeline DOT source for testing */
 const SIMPLE_DOT = `
@@ -347,6 +348,29 @@ describe("HTTP Server: POST /pipelines", () => {
 
     expect(statusCode).toBe(400);
     expect(data.error).toMatch(/Invalid DOT source/i);
+  });
+
+  it("accepts workflow_base_dir for string workflows and persists it to run-state", async () => {
+    const workflowBaseDir = path.join(tmpLogsRoot, "workflow-base");
+    const { statusCode, data } = await request("POST", "/pipelines", {
+      dotSource: `
+        digraph WorkflowBaseDir {
+          graph [goal="workflow base dir"]
+          start [shape=Mdiamond]
+          exit [shape=Msquare]
+          a [prompt="Do A", backend_setup="${"${workflow_base_dir}"}/setup.mjs"]
+          start -> a -> exit
+        }
+      `,
+      workflow_base_dir: workflowBaseDir,
+    });
+
+    expect(statusCode).toBe(201);
+    const runId = data.runId as string;
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(tmpLogsRoot, runId, "run-state.json"), "utf-8"),
+    ) as { workflowBaseDir?: string | null };
+    expect(persisted.workflowBaseDir).toBe(workflowBaseDir);
   });
 });
 
@@ -836,6 +860,68 @@ describe("HTTP Server: POST /pipelines/{id}/steer", () => {
   });
 });
 
+describe("HTTP Server: terminal failure durability", () => {
+  it("persists the terminal failure reason before and after restart", async () => {
+    const failureReason =
+      "IMPORT_ARTIFACT_CONTRACT_INVALID: import-analysis heading count mismatch. Expected 8, received 9.";
+
+    await restartServer({
+      backend: {
+        async run() {
+          return {
+            status: StageStatus.FAIL,
+            failureReason,
+          };
+        },
+      },
+    });
+
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: SIMPLE_DOT,
+    });
+    const runId = runData.runId as string;
+
+    const liveStatus = await waitForStatus(runId, ["failed"]);
+    expect(liveStatus.status).toBe("failed");
+    expect(liveStatus.error).toBe(failureReason);
+
+    const persistedState = JSON.parse(
+      fs.readFileSync(path.join(tmpLogsRoot, runId, "run-state.json"), "utf-8"),
+    ) as { error?: string };
+    expect(persistedState.error).toBe(failureReason);
+
+    await restartServer();
+
+    const recoveredStatus = await waitForStatus(runId, ["failed"]);
+    expect(recoveredStatus.status).toBe("failed");
+    expect(recoveredStatus.error).toBe(failureReason);
+  });
+
+  it("keeps error absent for successful terminal outcomes", async () => {
+    await restartServer({
+      backend: {
+        async run() {
+          return "ok";
+        },
+      },
+    });
+
+    const { data: runData } = await request("POST", "/pipelines", {
+      dotSource: SIMPLE_DOT,
+    });
+    const runId = runData.runId as string;
+
+    const status = await waitForStatus(runId, ["completed"]);
+    expect(status.status).toBe("completed");
+    expect(status.error).toBeUndefined();
+
+    const persistedState = JSON.parse(
+      fs.readFileSync(path.join(tmpLogsRoot, runId, "run-state.json"), "utf-8"),
+    ) as { error?: string };
+    expect(persistedState.error).toBeUndefined();
+  });
+});
+
 describe("HTTP Server: recovery hardening for malformed durable JSON", () => {
   it("recovered run status includes context restored from checkpoint", async () => {
     await new Promise<void>((resolve) => {
@@ -890,6 +976,53 @@ describe("HTTP Server: recovery hardening for malformed durable JSON", () => {
     expect((status.data.context as Record<string, unknown>)["custom.key"]).toBe(
       "recovered-value",
     );
+  });
+
+  it("preserves workflow_base_dir across restart recovery", async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+
+    const run = path.join(tmpLogsRoot, "run-1");
+    const workflowBaseDir = path.join(tmpLogsRoot, "workflow-base");
+    fs.mkdirSync(run, { recursive: true });
+    fs.writeFileSync(
+      path.join(run, "run-state.json"),
+      JSON.stringify({
+        runId: "run-1",
+        status: "running",
+        currentNode: "a",
+        completedNodes: [],
+        pendingQuestionId: null,
+        workflowBaseDir,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    fs.writeFileSync(
+      path.join(run, "pipeline.dot"),
+      `
+        digraph WorkflowBaseDir {
+          graph [goal="workflow base dir"]
+          start [shape=Mdiamond]
+          exit [shape=Msquare]
+          a [prompt="Do A", backend_setup="${"${workflow_base_dir}"}/setup.mjs"]
+          start -> a -> exit
+        }
+      `,
+    );
+
+    server = createServer({ logsRoot: tmpLogsRoot }) as HttpPipelineServer;
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const addr = server.address();
+    if (addr && typeof addr === "object") {
+      baseUrl = `http://127.0.0.1:${addr.port}`;
+    }
+
+    const recovered = server.runs.get("run-1");
+    expect(recovered?.workflowBaseDir).toBe(workflowBaseDir);
+    expect(recovered?.graph).not.toBeNull();
   });
 
   it("restores manager-owned child execution for steering after server restart", async () => {

@@ -10,6 +10,7 @@ import {
   isHumanPromptQuestionType,
 } from "../handlers/human-prompt.js";
 import { QuestionType, type HumanPromptQuestion } from "../handlers/types.js";
+import { getWorkflowPathIssues } from "../workflow-paths.js";
 
 export enum Severity {
   ERROR = "error",
@@ -559,6 +560,18 @@ const promptCommandExistsRule: LintRule = {
   },
 };
 
+const workflowPathContractRule: LintRule = {
+  name: "workflow_path_contract",
+  apply(graph) {
+    return getWorkflowPathIssues(graph).map((entry) => ({
+      rule: "workflow_path_contract",
+      severity: Severity.ERROR,
+      message: entry.message,
+      nodeId: entry.nodeId,
+    }));
+  },
+};
+
 /** All built-in lint rules */
 export const BUILT_IN_RULES: LintRule[] = [
   startNodeRule,
@@ -580,6 +593,7 @@ export const BUILT_IN_RULES: LintRule[] = [
   varsDeclaredRule,
   promptFileExistsRule,
   promptCommandExistsRule,
+  workflowPathContractRule,
 ];
 
 /** Validate a graph, returning all diagnostics */

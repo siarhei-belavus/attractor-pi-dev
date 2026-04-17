@@ -144,16 +144,31 @@ Key guidelines:
 - Keep changes focused and minimal. Only make changes that are directly requested.
 - Write safe, secure code. Avoid introducing security vulnerabilities.`;
 
+function resolveModelOrThrow(requestedProvider: string, requestedModelId: string): Model<Api> {
+  const baseMessage = `Requested Pi provider/model could not be resolved: provider="${requestedProvider}" model="${requestedModelId}". This pair is unavailable in the active Pi model registry. Check the requested values and ensure @mariozechner/pi-ai, @mariozechner/pi-agent-core, and @mariozechner/pi-coding-agent are synchronized to the same release.`;
+
+  try {
+    const model = getModel(
+      requestedProvider as any,
+      requestedModelId as any,
+    ) as Model<Api> | undefined;
+    if (model) {
+      return model;
+    }
+  } catch (error) {
+    const detail = error instanceof Error && error.message
+      ? ` Upstream lookup error: ${error.message}`
+      : "";
+    throw new Error(baseMessage + detail);
+  }
+
+  throw new Error(baseMessage);
+}
+
 export function createAnthropicProfile(opts: CreateProfileOptions): ProviderProfile {
   const provider = opts.provider ?? "anthropic";
   const modelId = opts.modelId ?? "claude-sonnet-4-5-20250929";
-
-  let model: Model<Api>;
-  try {
-    model = getModel(provider as any, modelId as any);
-  } catch {
-    model = getModel("anthropic" as any, "claude-sonnet-4-5-20250929" as any);
-  }
+  const model = resolveModelOrThrow(provider, modelId);
 
   // Create tools, optionally with ExecutionEnvironment-backed operations
   let tools: AgentTool[];
@@ -236,13 +251,7 @@ apply_patch format:
 export function createOpenAIProfile(opts: CreateProfileOptions): ProviderProfile {
   const provider = opts.provider ?? "openai";
   const modelId = opts.modelId ?? "gpt-4o";
-
-  let model: Model<Api>;
-  try {
-    model = getModel(provider as any, modelId as any);
-  } catch {
-    model = getModel("openai" as any, "gpt-4o" as any);
-  }
+  const model = resolveModelOrThrow(provider, modelId);
 
   let tools: AgentTool[];
   if (opts.executionEnv) {
@@ -318,13 +327,7 @@ Key guidelines:
 export function createGeminiProfile(opts: CreateProfileOptions): ProviderProfile {
   const provider = opts.provider ?? "google";
   const modelId = opts.modelId ?? "gemini-2.5-pro";
-
-  let model: Model<Api>;
-  try {
-    model = getModel(provider as any, modelId as any);
-  } catch {
-    model = getModel("google" as any, "gemini-2.5-pro" as any);
-  }
+  const model = resolveModelOrThrow(provider, modelId);
 
   let tools: AgentTool[];
   if (opts.executionEnv) {

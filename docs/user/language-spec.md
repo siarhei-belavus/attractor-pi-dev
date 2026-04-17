@@ -96,6 +96,28 @@ Declared in a `graph [ ... ]` block or as top-level `key = value` declarations.
 | `reasoning_effort`      | String   | `"high"`      | Reasoning depth: `low`, `medium`, `high`. |
 | `auto_status`           | Boolean  | `false`       | Auto-generate SUCCESS if handler writes no status. |
 | `allow_partial`         | Boolean  | `false`       | Accept PARTIAL_SUCCESS when retries are exhausted. |
+| `backend_setup`         | String   | unset         | Backend-specific setup module ref for session bootstrap. `backend-pi-dev` resolves this before session init/reopen. |
+| `cwd`                   | String   | backend default | Explicit working-directory override for the node session. |
+
+### Reserved runtime-token path attrs
+
+`backend_setup` and `cwd` use reserved runtime tokens, not normal graph vars.
+
+- `backend_setup` must use `${workflow_base_dir}` only.
+- `cwd` must use `${workflow_base_dir}` or `${run_root}` only.
+- Bare relative strings such as `./setup.mjs` or `workspace` are invalid for these attrs.
+- These attrs do **not** use `$var` expansion. `${workflow_base_dir}` / `${run_root}` are runtime tokens with separate validation and resolution rules.
+
+Examples:
+
+```dot
+prepare [
+  backend_setup="${workflow_base_dir}/backend/setup.mjs",
+  cwd="${run_root}/workspace"
+]
+```
+
+`thread_id` still controls session reuse, but shared sessions now have a bootstrap invariant: nodes that reuse one `thread_id` must resolve to the same `backend_setup` path/hash and the same resolved `cwd`, or execution fails fast instead of silently splitting session identity.
 
 ## Edge Attributes
 

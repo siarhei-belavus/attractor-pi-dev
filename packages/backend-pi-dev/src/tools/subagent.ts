@@ -120,8 +120,7 @@ function createSpawnAgentTool(
       handle.submitPromise = childSession
         .submit(params.task)
         .then(() => {
-          handle.status = "completed";
-          handle.output = childSession.getLastAssistantText() ?? "";
+          applyRuntimeSnapshotToHandle(handle, childSession.getRuntimeSnapshot());
         })
         .catch((err) => {
           handle.status = "failed";
@@ -205,8 +204,7 @@ function createWaitTool(
             await handle.submitPromise;
           } else if (handle.session.agent) {
             await handle.session.agent.waitForIdle();
-            handle.status = "completed";
-            handle.output = handle.session.getLastAssistantText() ?? "";
+            applyRuntimeSnapshotToHandle(handle, handle.session.getRuntimeSnapshot());
           }
         } catch (err) {
           handle.status = "failed";
@@ -265,6 +263,20 @@ function textResult(text: string): AgentToolResult<unknown> {
     content: [{ type: "text" as const, text }],
     details: undefined,
   };
+}
+
+function applyRuntimeSnapshotToHandle(
+  handle: SubAgentHandle,
+  runtime: ReturnType<Session["getRuntimeSnapshot"]>,
+): void {
+  if (runtime.terminalOutcome === "fail") {
+    handle.status = "failed";
+    handle.output = runtime.failureReason ?? "Agent execution failed";
+    return;
+  }
+
+  handle.status = "completed";
+  handle.output = runtime.lastAssistantText;
 }
 
 function errorResult(text: string): AgentToolResult<unknown> {

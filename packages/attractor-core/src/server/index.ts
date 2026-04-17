@@ -39,6 +39,7 @@ export interface RunState {
   status: RunStatus;
   graph: Graph | null;
   dotSource: string;
+  workflowBaseDir: string | null;
   logsRoot: string;
   runner: PipelineRunner | null;
   result: RunResult | null;
@@ -149,6 +150,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       currentNode: run.currentNode,
       completedNodes: [...run.completedNodes],
       pendingQuestionId: run.pendingQuestionId,
+      workflowBaseDir: run.workflowBaseDir,
       updatedAt: new Date().toISOString(),
       ...(run.error ? { error: run.error } : {}),
     });
@@ -177,6 +179,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     dotSource: string,
     graph: Graph | null,
     initialStatus: RunStatus,
+    workflowBaseDir: string | null = null,
   ): RunState {
     const runStateStore = new RunStateStore(logsRoot);
     const questionStore = new QuestionStore(logsRoot);
@@ -185,6 +188,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       status: initialStatus,
       graph,
       dotSource,
+      workflowBaseDir,
       logsRoot,
       runner: null,
       result: null,
@@ -290,7 +294,10 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
           run.currentNode = run.completedNodes[run.completedNodes.length - 1] ?? null;
         }
         run.context = result.context.snapshot();
-        run.error = null;
+        run.error =
+          result.outcome.status === StageStatus.FAIL
+            ? result.outcome.failureReason ?? "Pipeline failed"
+            : null;
         persistRunState(run);
       })
       .catch((err: unknown) => {
@@ -336,13 +343,22 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
         let graph: Graph | null = null;
         if (dotSource) {
           try {
-            graph = preparePipeline(dotSource).graph;
+            graph = preparePipeline(dotSource, {
+              workflowBaseDir: durable.workflowBaseDir ?? undefined,
+            }).graph;
           } catch {
             graph = null;
           }
         }
 
-        const run = createRunState(runId, logsRoot, dotSource, graph, durable.status);
+        const run = createRunState(
+          runId,
+          logsRoot,
+          dotSource,
+          graph,
+          durable.status,
+          durable.workflowBaseDir,
+        );
         run.currentNode = durable.currentNode;
         run.completedNodes = [...durable.completedNodes];
         run.pendingQuestionId = durable.pendingQuestionId;
@@ -392,7 +408,7 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       return;
     }
 
-    let parsed: { dotSource?: string };
+    let parsed: { dotSource?: string; workflow_base_dir?: string };
     try {
       parsed = JSON.parse(body);
     } catch {
@@ -404,10 +420,19 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
       sendError(res, 400, "Missing or invalid dotSource");
       return;
     }
+    if (
+      parsed.workflow_base_dir !== undefined &&
+      typeof parsed.workflow_base_dir !== "string"
+    ) {
+      sendError(res, 400, "Missing or invalid workflow_base_dir");
+      return;
+    }
 
     let graph: Graph;
     try {
-      graph = preparePipeline(parsed.dotSource).graph;
+      graph = preparePipeline(parsed.dotSource, {
+        workflowBaseDir: parsed.workflow_base_dir,
+      }).graph;
     } catch (err) {
       sendError(res, 400, `Invalid DOT source: ${err}`);
       return;
@@ -418,7 +443,14 @@ export function createServer(serverConfig: ServerConfig = {}): http.Server {
     fs.mkdirSync(logsRoot, { recursive: true });
     fs.writeFileSync(path.join(logsRoot, "pipeline.dot"), parsed.dotSource);
 
-    const run = createRunState(runId, logsRoot, parsed.dotSource, graph, "running");
+    const run = createRunState(
+      runId,
+      logsRoot,
+      parsed.dotSource,
+      graph,
+      "running",
+      parsed.workflow_base_dir ?? null,
+    );
     runs.set(runId, run);
     persistRunState(run);
     startRunner(run, { sessionAccessMode: "fresh" });
