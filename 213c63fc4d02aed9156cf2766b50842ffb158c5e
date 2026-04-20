@@ -1,0 +1,409 @@
+packages/attractor-core/package.json
+  8ed0aa16eb995283 9-11
+packages/backend-pi-dev/package.json
+  8ed0aa16eb995283 9-11,25,29
+.gitignore
+  h_23e3268d354e1e 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "213c63fc4d02aed9156cf2766b50842ffb158c5e",
+  "prompts": {
+    "024a4773d8c55695": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "bbcff389-0475-4f79-8c93-5d82984df125",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 160,
+      "overriden_lines": 0
+    },
+    "0741a4b8ad83402e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "6d4f0107-92cb-4445-9aa9-d43e5d649d55",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    },
+    "07aad9e867caf6f1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "f9bc1c02-0e93-46bf-9c99-b98840330785",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 44,
+      "overriden_lines": 0
+    },
+    "0b7f26c02dd65ab1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "b989913e-97b2-4d54-8bd3-8e0a1ad4898d",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 142,
+      "overriden_lines": 0
+    },
+    "0e02fe2b3265ed32": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "3be3092c-4aad-4664-beda-ff4098bcb286",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 241,
+      "overriden_lines": 0
+    },
+    "1a1984bcca1137ad": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "f6c431ed-075c-4c93-b5eb-b9adecdc2a47",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "484b3f3bfa4d0b30": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "f0cee423-3b41-4b0c-80bc-877e7fd96379",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 47,
+      "overriden_lines": 0
+    },
+    "4ceb6f3f8bb3d825": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "d9e8feee-8a89-4e99-bab1-2ef8c7e5bf55",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    },
+    "4d34ffa94fc1be56": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "6352d396-2d84-468a-aac0-9db8d940ec02",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 19,
+      "overriden_lines": 0
+    },
+    "503a8d916c1a0f79": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "edca79f0-fbc8-4132-809f-29a19cd745db",
+        "model": "glm-5.1"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "616b0e322bdd2ddb": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "1954de7f-4dbd-4824-9f31-ce305b3bfef2",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    },
+    "66fe6b6ff8e81677": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "188223ae-e1ea-4da0-988c-16839759a585",
+        "model": "zai/glm-5.1"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "671ae67e627258f3": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "41b8dcc5-9efb-42f8-ac45-1e2c5abffd0f",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 56,
+      "overriden_lines": 0
+    },
+    "6735d6641e0a0623": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "55594558-f048-4709-9207-1cc6e78a82a8",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 79,
+      "overriden_lines": 0
+    },
+    "6df605ec161cc0e3": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "c6f81f48-7cb2-44d9-8124-c8b3a051caba",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    },
+    "6e44c4029d73898f": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "e68ebd29-949b-44de-afc2-ee6943548b46",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 21,
+      "overriden_lines": 0
+    },
+    "8afff2a28579895a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "41030b98-ff95-4489-8cc0-788150db2e26",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 40,
+      "overriden_lines": 0
+    },
+    "8ed0aa16eb995283": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "f0ee3f79-61cc-45c0-ad5d-78dd68902a95",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 1,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    },
+    "8ff95a3ce3de960a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "e345467c-527e-4978-aecc-57010e36909c",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 31,
+      "overriden_lines": 0
+    },
+    "96ff0b45b89edc92": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "13a00004-cbf8-4328-aabf-aaec8638bd15",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 56,
+      "overriden_lines": 0
+    },
+    "a0735d2ea573f666": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "113dfb6d-e501-425d-a7d0-b46d3e41c906",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    },
+    "a65e3608548cfcb5": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "8905b03c-1738-4448-9073-04366ed750f9",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 132,
+      "overriden_lines": 0
+    },
+    "ab3c422c3a6b312b": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "823216d2-1238-4f71-8a99-7ece3b0aafdf",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 171,
+      "overriden_lines": 0
+    },
+    "b5c4f3198510fd32": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "bf4fb1cc-1cc7-43eb-a4cd-da84fe0245b2",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 63,
+      "overriden_lines": 0
+    },
+    "bef1a1429e6fb7dd": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "2017c5c8-6207-4851-bbd0-a4523c7a599a",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 40,
+      "overriden_lines": 0
+    },
+    "c358d49c5ee013f6": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "a34b6588-d8c6-456a-9068-308d2e951c29",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 14,
+      "overriden_lines": 0
+    },
+    "d0bafd69e9bc6a6b": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "6d2cc2e4-6c09-4bad-b34e-3219e84f180f",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 229,
+      "overriden_lines": 0
+    },
+    "d32fe41c6c57bdb1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "c26d6439-8d7d-4983-b106-541099916dd8",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    },
+    "e8c419e1af1765b0": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "8eed251d-5186-46a5-a8c9-253ef8e3c931",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 52,
+      "overriden_lines": 0
+    },
+    "eba7ac36f2ed4335": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "536b1681-9a47-48e8-b3bb-3b0910fedf17",
+        "model": "openai-codex/gpt-5.4"
+      },
+      "human_author": "Siarhei Belavus <Siarhei_Belavus@epam.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 29,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_23e3268d354e1e": {
+      "author": "Siarhei Belavus"
+    }
+  }
+}
