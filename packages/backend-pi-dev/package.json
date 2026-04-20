@@ -6,6 +6,9 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": ["dist"],
+  "publishConfig": {
+    "registry": "https://artifactory.epam.com/artifactory/api/npm/epm-dce-npm/"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -19,10 +22,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@attractor/core": "workspace:*",
+    "@attractor/core": "0.1.0",
     "@mariozechner/pi-agent-core": "^0.67.3",
     "@mariozechner/pi-ai": "^0.67.3",
     "@mariozechner/pi-coding-agent": "^0.67.3",
+    "@modelcontextprotocol/sdk": "^1.25.2",
     "@sinclair/typebox": "^0.34.0",
     "glob": "^10.0.0"
   },

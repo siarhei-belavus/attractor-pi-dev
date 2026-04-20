@@ -6,6 +6,9 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": ["dist"],
+  "publishConfig": {
+    "registry": "https://artifactory.epam.com/artifactory/api/npm/epm-dce-npm/"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

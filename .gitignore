@@ -13,3 +13,4 @@ tmp/
 .plans/
 .initiatives/
 .issues/
+*.tgz
